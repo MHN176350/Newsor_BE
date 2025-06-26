@@ -1,0 +1,6 @@
+<svg width="150" height="150" xmlns="http://www.w3.org/2000/svg">
+  <rect width="150" height="150" fill="#e1e5e9"/>
+  <circle cx="75" cy="60" r="25" fill="#6c757d"/>
+  <path d="M45 110 Q45 90 75 90 Q105 90 105 110 L105 130 L45 130 Z" fill="#6c757d"/>
+  <text x="75" y="145" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#6c757d">Default Avatar</text>
+</svg>
