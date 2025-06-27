@@ -26,6 +26,11 @@ class ObtainJSONWebTokenWithUser(graphene.Mutation):
         if not user.is_active:
             raise Exception('User account is disabled')
         
+        # Update last_login timestamp
+        from django.utils import timezone
+        user.last_login = timezone.now()
+        user.save(update_fields=['last_login'])
+        
         # Use the built-in JWT token generation
         from graphql_jwt.shortcuts import get_token
         

@@ -15,7 +15,7 @@ class UserType(DjangoObjectType):
     
     class Meta:
         model = User
-        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'is_active', 'date_joined')
+        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'is_active', 'date_joined', 'last_login')
 
     def resolve_profile(self, info):
         """
@@ -139,6 +139,7 @@ class Query(graphene.ObjectType):
     hello = graphene.String(name=graphene.String(default_value='World'))
     
     # User queries
+    me = graphene.Field(UserType)
     users = graphene.List(UserType)
     user = graphene.Field(UserType, id=graphene.Int(required=True))
     user_profile = graphene.Field(UserProfileType, user_id=graphene.Int(required=True))
@@ -147,9 +148,14 @@ class Query(graphene.ObjectType):
     news_list = graphene.List(NewsType, 
                              status=graphene.String(),
                              category_id=graphene.Int(),
-                             author_id=graphene.Int())
+                             author_id=graphene.Int(),
+                             search=graphene.String(),
+                             tag_id=graphene.Int())
     news_article = graphene.Field(NewsType, id=graphene.Int(), slug=graphene.String())
-    published_news = graphene.List(NewsType)
+    published_news = graphene.List(NewsType,
+                                  search=graphene.String(),
+                                  category_id=graphene.Int(),
+                                  tag_id=graphene.Int())
     
     # Category and Tag queries
     categories = graphene.List(CategoryType)
@@ -165,6 +171,13 @@ class Query(graphene.ObjectType):
     def resolve_hello(self, info, name):
         """Simple hello world resolver"""
         return f'Hello {name}'
+    
+    def resolve_me(self, info):
+        """Get current authenticated user"""
+        user = info.context.user
+        if user.is_authenticated:
+            return user
+        return None
 
     def resolve_users(self, info):
         """Get all users"""
@@ -184,8 +197,10 @@ class Query(graphene.ObjectType):
         except UserProfile.DoesNotExist:
             return None
 
-    def resolve_news_list(self, info, status=None, category_id=None, author_id=None):
+    def resolve_news_list(self, info, status=None, category_id=None, author_id=None, search=None, tag_id=None):
         """Get news articles with optional filters"""
+        from django.db.models import Q
+        
         queryset = News.objects.all()
         
         if status:
@@ -194,8 +209,17 @@ class Query(graphene.ObjectType):
             queryset = queryset.filter(category_id=category_id)
         if author_id:
             queryset = queryset.filter(author_id=author_id)
+        if tag_id:
+            queryset = queryset.filter(tags__id=tag_id)
+        if search:
+            queryset = queryset.filter(
+                Q(title__icontains=search) |
+                Q(content__icontains=search) |
+                Q(excerpt__icontains=search) |
+                Q(meta_keywords__icontains=search)
+            )
             
-        return queryset
+        return queryset.distinct().order_by('-created_at')
 
     def resolve_news_article(self, info, id=None, slug=None):
         """Get news article by ID or slug"""
@@ -207,9 +231,25 @@ class Query(graphene.ObjectType):
         except News.DoesNotExist:
             return None
 
-    def resolve_published_news(self, info):
-        """Get published news articles"""
-        return News.objects.filter(status='published').order_by('-published_at')
+    def resolve_published_news(self, info, search=None, category_id=None, tag_id=None):
+        """Get published news articles with optional filters"""
+        from django.db.models import Q
+        
+        queryset = News.objects.filter(status='published')
+        
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+        if tag_id:
+            queryset = queryset.filter(tags__id=tag_id)
+        if search:
+            queryset = queryset.filter(
+                Q(title__icontains=search) |
+                Q(content__icontains=search) |
+                Q(excerpt__icontains=search) |
+                Q(meta_keywords__icontains=search)
+            )
+            
+        return queryset.distinct().order_by('-published_at')
 
     def resolve_categories(self, info):
         """Get all categories"""
