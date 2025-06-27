@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from cloudinary.models import CloudinaryField
 from django.urls import reverse
+from django.utils.text import slugify
 
 
 class Category(models.Model):
@@ -22,6 +23,9 @@ class Category(models.Model):
 
     def __str__(self):
         return self.name
+    def save(self, *args, **kwargs):
+        self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
 
 
 class Tag(models.Model):
@@ -31,12 +35,16 @@ class Tag(models.Model):
     name = models.CharField(max_length=50, unique=True)
     slug = models.SlugField(max_length=50, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ['name']
 
     def __str__(self):
         return self.name
+    def save(self, *args, **kwargs):
+        self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
 
 
 class UserProfile(models.Model):
@@ -143,6 +151,16 @@ class News(models.Model):
 
     def is_published(self):
         return self.status == 'published' and self.published_at and self.published_at <= timezone.now()
+    # def save(self, *args, **kwargs):
+    #     if not self.slug:
+    #         base_slug = slugify(self.title)
+    #         slug = base_slug
+    #         counter = 1
+    #         while News.objects.filter(slug=slug).exists():
+    #             slug = f"{base_slug}-{counter}"
+    #             counter += 1
+    #         self.slug = slug
+    #     super().save(*args, **kwargs)
 
 
 class Comment(models.Model):
@@ -182,6 +200,8 @@ class Like(models.Model):
     article = models.ForeignKey(News, on_delete=models.CASCADE, null=True, blank=True, related_name='likes')
     comment = models.ForeignKey(Comment, on_delete=models.CASCADE, null=True, blank=True, related_name='likes')
     created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+
 
     class Meta:
         constraints = [

@@ -135,15 +135,15 @@ class Query(graphene.ObjectType):
     """
     API GraphQL Queries
     """
-    # Basic queries
+# Basic queries
     hello = graphene.String(name=graphene.String(default_value='World'))
     
-    # User queries
+# User queries
     users = graphene.List(UserType)
     user = graphene.Field(UserType, id=graphene.Int(required=True))
     user_profile = graphene.Field(UserProfileType, user_id=graphene.Int(required=True))
     
-    # News queries
+# News queries
     news_list = graphene.List(NewsType, 
                              status=graphene.String(),
                              category_id=graphene.Int(),
@@ -151,16 +151,25 @@ class Query(graphene.ObjectType):
     news_article = graphene.Field(NewsType, id=graphene.Int(), slug=graphene.String())
     published_news = graphene.List(NewsType)
     
-    # Category and Tag queries
+# Category and Tag queries
     categories = graphene.List(CategoryType)
     category = graphene.Field(CategoryType, id=graphene.Int())
+    #Search category by key word
+    search_categories = graphene.List(CategoryType, keyword=graphene.String(required=True))
     tags = graphene.List(TagType)
+    #Search tag by key word
+    search_tags = graphene.List(TagType, keyword=graphene.String(required=True))
     
-    # Comment queries
+# Comment queries
+    # Search cmt by article id
     article_comments = graphene.List(CommentType, article_id=graphene.Int(required=True))
     
-    # Analytics queries
+# Analytics queries
     user_reading_history = graphene.List(ReadingHistoryType, user_id=graphene.Int(required=True))
+
+# Like queries:
+    is_article_liked = graphene.Boolean(article_id=graphene.ID(required=True))
+    is_comment_liked = graphene.Boolean(comment_id=graphene.ID(required=True))
 
     def resolve_hello(self, info, name):
         """Simple hello world resolver"""
@@ -221,20 +230,41 @@ class Query(graphene.ObjectType):
             return Category.objects.get(pk=id)
         except Category.DoesNotExist:
             return None
+    def resolve_search_categories(self, info, keyword):
+        """ Filter category name containing the keyword (case-insensitive) """
+        return Category.objects.filter(name__icontains=keyword)[:10]  # Limit to 10 results
 
     def resolve_tags(self, info):
         """Get all tags"""
         return Tag.objects.all()
+    
+    def resolve_search_tags(self, info, keyword):
+        """ Filter tag name containing the keyword (case-insensitive) """
+        return Tag.objects.filter(name__icontains=keyword)[:10]  # Limit to 10 results
 
     def resolve_article_comments(self, info, article_id):
         """Get comments for an article"""
-        return Comment.objects.filter(article_id=article_id, status='approved')
+        return Comment.objects.filter(article_id=article_id)
 
     def resolve_user_reading_history(self, info, user_id):
         """Get user's reading history"""
         return ReadingHistory.objects.filter(user_id=user_id)
+    
+    def resolve_is_article_liked(self, info, article_id):
+        """Check user liked article"""
+        user = info.context.user
+        if user.is_anonymous:
+            return False
+        return Like.objects.filter(user=user, article_id=article_id).exists()
 
+    def resolve_is_comment_liked(self, info, comment_id):
+        """Check user liked comment"""
+        user = info.context.user
+        if user.is_anonymous:
+            return False
+        return Like.objects.filter(user=user, comment_id=comment_id).exists()
 
+# Mutation
 class CreateUser(graphene.Mutation):
     """
     Create a new user with profile
@@ -447,6 +477,74 @@ class CreateCategory(graphene.Mutation):
             return CreateCategory(category = category, success=True, errors="Category created successfully.")
         except Exception as e:
             return CreateCategory(success=False, errors="Unexpected error: " + str(e), category=None)
+
+class UpdateCategory(graphene.Mutation):
+    """
+    Update an existing category's name, or description
+    """
+
+    class Arguments:
+        id = graphene.ID(required=True)
+        name = graphene.String(required=False)
+        description = graphene.String(required=False)
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+    category = graphene.Field(CategoryType)
+
+    def mutate(self, info, id, name=None, description=None):
+        try:
+            category = Category.objects.get(id=id)
+
+            # Check for unique name and slug if being updated
+            if name and name != category.name:
+                if Category.objects.filter(name=name).exclude(id=id).exists():
+                    return UpdateCategory(success=False, errors="Name already exists.", category=None)
+                category.name = name
+
+            if description is not None:
+                category.description = description
+
+            category.save()
+            return UpdateCategory(success=True, errors="Category updated successfully.", category=category)
+
+        except Category.DoesNotExist:
+            return UpdateCategory(success=False, errors="Category not found.", category=None)
+        except Exception as e:
+            return UpdateCategory(success=False, errors="Unexpected error: " + str(e), category=None)
+        
+class DeleteCategory(graphene.Mutation):
+    """
+    Soft delete a category by setting is_active=False
+    """
+
+    class Arguments:
+        id = graphene.ID(required=True)
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+    category = graphene.Field(CategoryType)
+
+    def mutate(self, info, id):
+        try:
+            # Try to find the category
+            category = Category.objects.get(id=id)
+
+            # Check if already inactive
+            if not category.is_active:
+                return DeleteCategory(success=False, errors="Category is already inactive.", category=None)
+
+            # Soft delete by setting is_active to False
+            category.is_active = False
+            category.save()
+
+            return DeleteCategory(success=True, errors="Category deactivated successfully.", category=category)
+
+        except Category.DoesNotExist:
+            return DeleteCategory(success=False, errors="Category not found.", category=None)
+
+        except Exception as e:
+            return DeleteCategory(success=False, errors="Unexpected error: " + str(e), category=None)
         
 class CreateTag(graphene.Mutation):
     """
@@ -477,6 +575,70 @@ class CreateTag(graphene.Mutation):
             return CreateTag(tag = tag, success=True, errors="Tag created successfully.")
         except Exception as e:
             return CreateTag(success=False, errors="Unexpected error: " + str(e), tag=None)
+        
+class UpdateTag(graphene.Mutation):
+    """
+    Update an existing tag's name
+    """
+
+    class Arguments:
+        id = graphene.ID(required=True)
+        name = graphene.String(required=False)
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+    tag = graphene.Field(TagType)
+
+    def mutate(self, info, id, name=None):
+        try:
+            tag = Tag.objects.get(id=id)
+
+            # Check for unique name and slug if being updated
+            if name and name != tag.name:
+                if Category.objects.filter(name=name).exclude(id=id).exists():
+                    return UpdateTag(success=False, errors="Name already exists.", tag=None)
+                tag.name = name
+
+            tag.save()
+            return UpdateTag(success=True, errors="Tag updated successfully.", tag=tag)
+
+        except Tag.DoesNotExist:
+            return UpdateTag(success=False, errors="Tag not found.", tag=None)
+        except Tag as e:
+            return UpdateTag(success=False, errors="Unexpected error: " + str(e), tag=None)
+        
+class DeleteTag(graphene.Mutation):
+    """
+    Soft delete a tag by setting is_active=False
+    """
+
+    class Arguments:
+        id = graphene.ID(required=True)
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+    tag = graphene.Field(TagType)
+
+    def mutate(self, info, id):
+        try:
+            # Try to find the tag
+            tag = Tag.objects.get(id=id)
+
+            # Check if already inactive
+            if not tag.is_active:
+                return DeleteTag(success=False, errors="Tag is already inactive.", tag=None)
+
+            # Soft delete by setting is_active to False
+            tag.is_active = False
+            tag.save()
+
+            return DeleteTag(success=True, errors="Tag deactivated successfully.", tag=tag)
+
+        except Tag.DoesNotExist:
+            return DeleteTag(success=False, errors="Tag not found.", tag=None)
+
+        except Exception as e:
+            return DeleteTag(success=False, errors="Unexpected error: " + str(e), tag=None)
         
 class CreateComment(graphene.Mutation):
     """
@@ -527,6 +689,122 @@ class CreateComment(graphene.Mutation):
         except Exception as e:
             return CreateComment(success=False, errors="Unexpected error: " + str(e), comment=None)
 
+class CreateLikeArticle(graphene.Mutation):
+    """
+    Like a news article by the authenticated user
+    """
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+
+    class Arguments:
+        article_id = graphene.ID(required=True)
+
+    def mutate(self, info, article_id):
+        try:
+            user = info.context.user
+
+            # Check user authentication
+            if user.is_anonymous:
+                return CreateLikeArticle(success=False, errors="Authentication required.")
+
+            # Check if the article exists
+            try:
+                article = News.objects.get(pk=article_id)
+            except News.DoesNotExist:
+                return CreateLikeArticle(success=False, errors="Article not found.")
+
+            # Check if already liked
+            if Like.objects.filter(user=user, article=article).exists():
+                return CreateLikeArticle(success=False, errors="You already liked this article.")
+
+            # Create like
+            Like.objects.create(user=user, article=article)
+
+            return CreateLikeArticle(success=True, errors="Article liked successfully.")
+
+        except Exception as e:
+            return CreateLikeArticle(success=False, errors="Unexpected error: " + str(e))
+
+class CreateLikeComment(graphene.Mutation):
+    """
+    Like a comment by the authenticated user
+    """
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+
+    class Arguments:
+        comment_id = graphene.ID(required=True)
+
+    def mutate(self, info, comment_id):
+        try:
+            user = info.context.user
+
+            # Check user authentication
+            if user.is_anonymous:
+                return CreateLikeComment(success=False, errors="Authentication required.")
+
+            # Check if comment exists
+            try:
+                comment = Comment.objects.get(pk=comment_id)
+            except Comment.DoesNotExist:
+                return CreateLikeComment(success=False, errors="Comment not found.")
+
+            # Check if already liked
+            if Like.objects.filter(user=user, comment=comment).exists():
+                return CreateLikeComment(success=False, errors="You already liked this comment.")
+
+            # Create like
+            Like.objects.create(user=user, comment=comment)
+
+            return CreateLikeComment(success=True, errors="Comment liked successfully.")
+
+        except Exception as e:
+            return CreateLikeComment(success=False, errors="Unexpected error: " + str(e))
+
+class UpdateLikeStatus(graphene.Mutation):
+    """
+    Deactivate (cancel) an existing like by setting is_active=False
+    """
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+
+    class Arguments:
+        article_id = graphene.ID(required=False)
+        comment_id = graphene.ID(required=False)
+
+    def mutate(self, info, article_id=None, comment_id=None):
+        try:
+            user = info.context.user
+            if user.is_anonymous:
+                return UpdateLikeStatus(success=False, errors="Authentication required.")
+
+            if not article_id and not comment_id:
+                return UpdateLikeStatus(success=False, errors="You must provide article_id or comment_id.")
+
+            # Check Like exists and is active
+            like_filter = {"user": user, "is_active": True}
+            if article_id:
+                like_filter["article_id"] = article_id
+            if comment_id:
+                like_filter["comment_id"] = comment_id
+
+            try:
+                like = Like.objects.get(**like_filter)
+            except Like.DoesNotExist:
+                return UpdateLikeStatus(success=False, errors="Active like not found.")
+
+            # Deactivate like
+            like.is_active = False
+            like.save()
+
+            return UpdateLikeStatus(success=True, errors="Like deactivated successfully.")
+
+        except Exception as e:
+            return UpdateLikeStatus(success=False, errors="Unexpected error: " + str(e))
+
 class Mutation(graphene.ObjectType):
     """
     API GraphQL Mutations
@@ -537,3 +815,10 @@ class Mutation(graphene.ObjectType):
     create_category = CreateCategory.Field()
     create_tag = CreateTag.Field()
     create_comment = CreateComment.Field()
+    create_like_article = CreateLikeArticle.Field()
+    create_like_comment = CreateLikeComment.Field()
+    update_like_status = UpdateLikeStatus.Field()
+    update_category = UpdateCategory.Field()
+    delete_category = DeleteCategory.Field()
+    update_tag = UpdateTag.Field()
+    delete_tag = DeleteTag.Field()
