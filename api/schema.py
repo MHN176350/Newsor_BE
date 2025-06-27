@@ -131,6 +131,47 @@ class NewsletterSubscriptionType(DjangoObjectType):
         fields = '__all__'
 
 
+class DashboardStatsType(graphene.ObjectType):
+    """
+    Dashboard statistics type
+    """
+    # User statistics
+    total_users = graphene.Int()
+    total_readers = graphene.Int()
+    total_writers = graphene.Int()
+    total_managers = graphene.Int()
+    total_admins = graphene.Int()
+    new_users_this_month = graphene.Int()
+    
+    # News statistics
+    total_news = graphene.Int()
+    published_news = graphene.Int()
+    draft_news = graphene.Int()
+    pending_news = graphene.Int()
+    rejected_news = graphene.Int()
+    news_this_month = graphene.Int()
+    
+    # Category and Tag statistics
+    total_categories = graphene.Int()
+    total_tags = graphene.Int()
+    
+    # Activity statistics
+    total_views = graphene.Int()
+    total_likes = graphene.Int()
+    total_comments = graphene.Int()
+
+
+class RecentActivityType(graphene.ObjectType):
+    """
+    Recent activity type
+    """
+    id = graphene.ID()
+    action = graphene.String()
+    description = graphene.String()
+    timestamp = graphene.DateTime()
+    user = graphene.Field(UserType)
+
+
 class Query(graphene.ObjectType):
     """
     API GraphQL Queries
@@ -167,6 +208,10 @@ class Query(graphene.ObjectType):
     
     # Analytics queries
     user_reading_history = graphene.List(ReadingHistoryType, user_id=graphene.Int(required=True))
+    
+    # Dashboard queries
+    dashboard_stats = graphene.Field(DashboardStatsType)
+    recent_activity = graphene.List(RecentActivityType, limit=graphene.Int())
 
     def resolve_hello(self, info, name):
         """Simple hello world resolver"""
@@ -273,8 +318,106 @@ class Query(graphene.ObjectType):
     def resolve_user_reading_history(self, info, user_id):
         """Get user's reading history"""
         return ReadingHistory.objects.filter(user_id=user_id)
+    
+    def resolve_dashboard_stats(self, info):
+        """Get dashboard statistics"""
+        from datetime import datetime, timedelta
+        from django.db.models import Count, Sum
+        
+        # Check if user is admin or manager
+        user = info.context.user
+        if not user.is_authenticated:
+            return None
+            
+        try:
+            profile = UserProfile.objects.get(user=user)
+            if profile.role.lower() not in ['admin', 'manager']:
+                return None
+        except UserProfile.DoesNotExist:
+            return None
+        
+        # Calculate statistics
+        current_month = datetime.now().replace(day=1)
+        
+        # User statistics
+        total_users = User.objects.count()
+        user_roles = UserProfile.objects.values('role').annotate(count=Count('role'))
+        role_counts = {role['role']: role['count'] for role in user_roles}
+        
+        new_users_this_month = User.objects.filter(date_joined__gte=current_month).count()
+        
+        # News statistics
+        news_stats = News.objects.values('status').annotate(count=Count('status'))
+        status_counts = {stat['status']: stat['count'] for stat in news_stats}
+        
+        news_this_month = News.objects.filter(created_at__gte=current_month).count()
+        
+        # Category and Tag statistics
+        total_categories = Category.objects.filter(is_active=True).count()
+        total_tags = Tag.objects.count()
+        
+        # Activity statistics (using model fields)
+        total_views = News.objects.aggregate(total=Sum('view_count'))['total'] or 0
+        total_likes = News.objects.aggregate(total=Sum('like_count'))['total'] or 0
+        total_comments = Comment.objects.count() if hasattr(Comment, 'objects') else 0
+        
+        return DashboardStatsType(
+            # User statistics
+            total_users=total_users,
+            total_readers=role_counts.get('reader', 0),
+            total_writers=role_counts.get('writer', 0),
+            total_managers=role_counts.get('manager', 0),
+            total_admins=role_counts.get('admin', 0),
+            new_users_this_month=new_users_this_month,
+            
+            # News statistics
+            total_news=News.objects.count(),
+            published_news=status_counts.get('published', 0),
+            draft_news=status_counts.get('draft', 0),
+            pending_news=status_counts.get('pending', 0),
+            rejected_news=status_counts.get('rejected', 0),
+            news_this_month=news_this_month,
+            
+            # Category and Tag statistics
+            total_categories=total_categories,
+            total_tags=total_tags,
+            
+            # Activity statistics
+            total_views=total_views,
+            total_likes=total_likes,
+            total_comments=total_comments,
+        )
+    
+    def resolve_recent_activity(self, info, limit=10):
+        """Get recent activity"""
+        user = info.context.user
+        if not user.is_authenticated:
+            return []
+            
+        try:
+            profile = UserProfile.objects.get(user=user)
+            if profile.role.lower() not in ['admin', 'manager']:
+                return []
+        except UserProfile.DoesNotExist:
+            return []
+        
+        # Get recent news as activity
+        recent_news = News.objects.select_related('author').order_by('-created_at')[:limit]
+        
+        activities = []
+        for news in recent_news:
+            activities.append(RecentActivityType(
+                id=news.id,
+                action='news_created',
+                description=f'New article "{news.title}" was created',
+                timestamp=news.created_at,
+                user=news.author
+            ))
+        
+        return activities
 
-
+    # ...existing code...
+    
 class CreateUser(graphene.Mutation):
     """
     Create a new user with profile
@@ -410,7 +553,7 @@ class CreateNews(graphene.Mutation):
         try:
             # Check if user has writer role or higher
             profile = UserProfile.objects.get(user=user)
-            if profile.role not in ['writer', 'manager', 'admin']:
+            if profile.role.lower() not in ['writer', 'manager', 'admin']:
                 return CreateNews(success=False, errors=['Permission denied. Writer role required.'])
 
             # Check if category exists
@@ -567,6 +710,58 @@ class CreateComment(graphene.Mutation):
         except Exception as e:
             return CreateComment(success=False, errors="Unexpected error: " + str(e), comment=None)
 
+class ChangeUserRole(graphene.Mutation):
+    """
+    Change user role (admin only)
+    """
+    class Arguments:
+        user_id = graphene.Int(required=True)
+        new_role = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+    user = graphene.Field(UserType)
+
+    def mutate(self, info, user_id, new_role):
+        """
+        Change user role mutation (admin only)
+        """
+        current_user = info.context.user
+        if not current_user.is_authenticated:
+            return ChangeUserRole(success=False, errors=['Authentication required'])
+
+        try:
+            # Check if current user is admin
+            current_profile = UserProfile.objects.get(user=current_user)
+            if current_profile.role.lower() != 'admin':
+                return ChangeUserRole(success=False, errors=['Admin privileges required'])
+
+            # Validate new role
+            valid_roles = ['reader', 'writer', 'manager', 'admin']
+            if new_role not in valid_roles:
+                return ChangeUserRole(success=False, errors=[f'Invalid role. Must be one of: {", ".join(valid_roles)}'])
+
+            # Get target user
+            target_user = User.objects.get(id=user_id)
+            target_profile, created = UserProfile.objects.get_or_create(
+                user=target_user,
+                defaults={'role': new_role}
+            )
+            
+            if not created:
+                target_profile.role = new_role
+                target_profile.save()
+
+            return ChangeUserRole(success=True, errors=[], user=target_user)
+
+        except UserProfile.DoesNotExist:
+            return ChangeUserRole(success=False, errors=['User profile not found'])
+        except User.DoesNotExist:
+            return ChangeUserRole(success=False, errors=['User not found'])
+        except Exception as e:
+            return ChangeUserRole(success=False, errors=[str(e)])
+
+
 class Mutation(graphene.ObjectType):
     """
     API GraphQL Mutations
@@ -577,3 +772,4 @@ class Mutation(graphene.ObjectType):
     create_category = CreateCategory.Field()
     create_tag = CreateTag.Field()
     create_comment = CreateComment.Field()
+    change_user_role = ChangeUserRole.Field()

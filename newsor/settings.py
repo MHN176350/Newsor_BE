@@ -169,14 +169,18 @@ GRAPHENE = {
 GRAPHQL_JWT = {
     'JWT_VERIFY_EXPIRATION': True,
     'JWT_LONG_RUNNING_REFRESH_TOKEN': True,
-    'JWT_EXPIRATION_DELTA': timedelta(seconds=config('JWT_EXPIRATION_DELTA', default=300, cast=int)),  # 5 minutes
+    'JWT_EXPIRATION_DELTA': timedelta(seconds=config('JWT_EXPIRATION_DELTA', default=3600, cast=int)),  # 1 hour instead of 5 minutes
     'JWT_REFRESH_EXPIRATION_DELTA': timedelta(seconds=config('JWT_REFRESH_EXPIRATION_DELTA', default=604800, cast=int)),  # 7 days
+    'JWT_AUTH_HEADER_PREFIX': 'Bearer',
+    'JWT_ALLOW_ARGUMENT': True,
 }
 
 # CORS configuration
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
     "http://localhost:5174",
     "http://127.0.0.1:5174",
 ]
