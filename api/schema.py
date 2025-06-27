@@ -415,7 +415,117 @@ class CreateNews(graphene.Mutation):
             return CreateNews(success=False, errors=['User profile not found'])
         except Exception as e:
             return CreateNews(success=False, errors=[str(e)])
+        
+class CreateCategory(graphene.Mutation):
+    """
+    Create a new category
+    """
 
+    class Arguments:
+        name = graphene.String(required=True)
+        slug = graphene.String(required=True)
+        description = graphene.String(required=True)
+    category = graphene.Field(CategoryType)
+    success = graphene.Boolean()
+    errors = graphene.String()
+
+    def mutate(self, info, name, slug, description=""):
+        try:
+            # Check name and slug existed
+            if Category.objects.filter(slug=slug).exists():
+                return CreateCategory(success=False, errors="Slug already exists.", category=None)
+            if Category.objects.filter(name=name).exists():
+                return CreateCategory(success=False, errors="Name already exists.", category=None)
+
+            # Create new Category
+            
+            category = Category.objects.create(
+                name=name,
+                slug=slug,
+                description=description,
+            )
+            return CreateCategory(category = category, success=True, errors="Category created successfully.")
+        except Exception as e:
+            return CreateCategory(success=False, errors="Unexpected error: " + str(e), category=None)
+        
+class CreateTag(graphene.Mutation):
+    """
+    Create a new tag
+    """
+
+    class Arguments:
+        name = graphene.String(required=True)
+        slug = graphene.String(required=True)
+    tag = graphene.Field(TagType)
+    success = graphene.Boolean()
+    errors = graphene.String()
+
+    def mutate(self, info, name, slug, description=""):
+        try:
+            # Check name and slug existed
+            if Tag.objects.filter(slug=slug).exists():
+                return CreateTag(success=False, errors="Slug already exists.", tag=None)
+            if Tag.objects.filter(name=name).exists():
+                return CreateTag(success=False, errors="Name already exists.", tag=None)
+
+            # Create new Tag
+            
+            tag = Tag.objects.create(
+                name=name,
+                slug=slug,
+            )
+            return CreateTag(tag = tag, success=True, errors="Tag created successfully.")
+        except Exception as e:
+            return CreateTag(success=False, errors="Unexpected error: " + str(e), tag=None)
+        
+class CreateComment(graphene.Mutation):
+    """
+    Create a new comment
+    """
+
+    class Arguments:
+        article_id = graphene.ID(required=True)
+        content = graphene.String(required=True)
+        parent_id = graphene.ID(required=False)
+
+    comment = graphene.Field(CommentType)
+    success = graphene.Boolean()
+    errors = graphene.String()
+
+    def mutate(self, info, article_id, content, parent_id=None):
+        try:
+            user = info.context.user
+
+            # Check user authentication
+            if user.is_anonymous:
+                return CreateComment(success=False, errors="Authentication required.", comment=None)
+
+            # Check if the article exists
+            try:
+                article = News.objects.get(pk=article_id)
+            except News.DoesNotExist:
+                return CreateComment(success=False, errors="Article not found.", comment=None)
+
+            # Check if parent comment exists, if provided
+            parent = None
+            if parent_id:
+                try:
+                    parent = Comment.objects.get(pk=parent_id, article=article)
+                except Comment.DoesNotExist:
+                    return CreateComment(success=False, errors="Parent comment not found.", comment=None)
+
+            # Create new comment
+            comment = Comment.objects.create(
+                article=article,
+                author=user,
+                content=content,
+                parent=parent,
+            )
+
+            return CreateComment(comment=comment, success=True, errors="Comment created successfully.")
+
+        except Exception as e:
+            return CreateComment(success=False, errors="Unexpected error: " + str(e), comment=None)
 
 class Mutation(graphene.ObjectType):
     """
@@ -424,3 +534,6 @@ class Mutation(graphene.ObjectType):
     create_user = CreateUser.Field()
     update_user_profile = UpdateUserProfile.Field()
     create_news = CreateNews.Field()
+    create_category = CreateCategory.Field()
+    create_tag = CreateTag.Field()
+    create_comment = CreateComment.Field()
