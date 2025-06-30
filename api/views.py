@@ -23,10 +23,7 @@ def health_check(request):
 
 
 class UserRegistrationView(APIView):
-    """
-    API endpoint for user registration
-    Allows new users to register as readers
-    """
+   
     permission_classes = [permissions.AllowAny]
     
     def post(self, request):
