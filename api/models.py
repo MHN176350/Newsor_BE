@@ -230,7 +230,6 @@ class ReadingHistory(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reading_history')
     article = models.ForeignKey(News, on_delete=models.CASCADE, related_name='readers')
     read_at = models.DateTimeField(auto_now_add=True)
-    read_duration = models.PositiveIntegerField(default=0)  # in seconds
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.TextField(blank=True)
 

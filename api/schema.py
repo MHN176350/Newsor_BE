@@ -137,47 +137,17 @@ class Query(graphene.ObjectType):
     """
 # Basic queries
     hello = graphene.String(name=graphene.String(default_value='World'))
-    
-# User queries
-    users = graphene.List(UserType)
-    user = graphene.Field(UserType, id=graphene.Int(required=True))
-    user_profile = graphene.Field(UserProfileType, user_id=graphene.Int(required=True))
-    
-# News queries
-    news_list = graphene.List(NewsType, 
-                             status=graphene.String(),
-                             category_id=graphene.Int(),
-                             author_id=graphene.Int())
-    news_article = graphene.Field(NewsType, id=graphene.Int(), slug=graphene.String())
-    published_news = graphene.List(NewsType)
-    
-# Category and Tag queries
-    categories = graphene.List(CategoryType)
-    category = graphene.Field(CategoryType, id=graphene.Int())
-    #Search category by key word
-    search_categories = graphene.List(CategoryType, keyword=graphene.String(required=True))
-    tags = graphene.List(TagType)
-    #Search tag by key word
-    search_tags = graphene.List(TagType, keyword=graphene.String(required=True))
-    
-# Comment queries
-    # Search cmt by article id
-    article_comments = graphene.List(CommentType, article_id=graphene.Int(required=True))
-    
-# Analytics queries
-    user_reading_history = graphene.List(ReadingHistoryType, user_id=graphene.Int(required=True))
-
-# Like queries:
-    is_article_liked = graphene.Boolean(article_id=graphene.ID(required=True))
-    is_comment_liked = graphene.Boolean(comment_id=graphene.ID(required=True))
-
     def resolve_hello(self, info, name):
         """Simple hello world resolver"""
         return f'Hello {name}'
-
+    
+# User queries
+    users = graphene.List(UserType)
     def resolve_users(self, info):
         """Get all users"""
         return User.objects.all()
+    
+    user = graphene.Field(UserType, id=graphene.Int(required=True))
 
     def resolve_user(self, info, id):
         """Get user by ID"""
@@ -185,14 +155,20 @@ class Query(graphene.ObjectType):
             return User.objects.get(pk=id)
         except User.DoesNotExist:
             return None
-
+        
+    user_profile = graphene.Field(UserProfileType, user_id=graphene.Int(required=True))
     def resolve_user_profile(self, info, user_id):
         """Get user profile by user ID"""
         try:
             return UserProfile.objects.get(user_id=user_id)
         except UserProfile.DoesNotExist:
             return None
-
+    
+# News queries
+    news_list = graphene.List(NewsType, 
+                             status=graphene.String(),
+                             category_id=graphene.Int(),
+                             author_id=graphene.Int())
     def resolve_news_list(self, info, status=None, category_id=None, author_id=None):
         """Get news articles with optional filters"""
         queryset = News.objects.all()
@@ -206,6 +182,7 @@ class Query(graphene.ObjectType):
             
         return queryset
 
+    news_article = graphene.Field(NewsType, id=graphene.Int(), slug=graphene.String())
     def resolve_news_article(self, info, id=None, slug=None):
         """Get news article by ID or slug"""
         try:
@@ -215,48 +192,126 @@ class Query(graphene.ObjectType):
                 return News.objects.get(slug=slug)
         except News.DoesNotExist:
             return None
-
+        
+    published_news = graphene.List(NewsType)
     def resolve_published_news(self, info):
         """Get published news articles"""
-        return News.objects.filter(status='published').order_by('-published_at')
+        return News.objects.filter(status='published').order_by('-published_at')    
+    
+    articles_by_category = graphene.List(
+        NewsType,
+        category_id=graphene.ID(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0)
+    )
+    def resolve_articles_by_category(self, info, category_id, limit, offset):
+        """
+        Get articles filtered by category ID
+        """
+        return News.objects.filter(category_id=category_id, status='published').order_by('-published_at')[offset:offset + limit]
 
+    articles_by_tag = graphene.List(
+        NewsType,
+        tag_id=graphene.ID(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0)
+    )
+    def resolve_articles_by_tag(self, info, tag_id, limit, offset):
+        """
+        Get articles filtered by tag ID
+        """
+        return News.objects.filter(tags__id=tag_id, status='published').order_by('-published_at')[offset:offset + limit]
+# Category queries
+    categories = graphene.List(CategoryType)
     def resolve_categories(self, info):
         """Get all categories"""
         return Category.objects.filter(is_active=True)
-
+    
+    category = graphene.Field(CategoryType, id=graphene.Int())
     def resolve_category(self, info, id):
         """Get category by ID"""
         try:
             return Category.objects.get(pk=id)
         except Category.DoesNotExist:
             return None
+        
+    #Search category by key word
+    search_categories = graphene.List(CategoryType, keyword=graphene.String(required=True))
     def resolve_search_categories(self, info, keyword):
         """ Filter category name containing the keyword (case-insensitive) """
         return Category.objects.filter(name__icontains=keyword)[:10]  # Limit to 10 results
 
+# Tag queries
+    tags = graphene.List(TagType)
     def resolve_tags(self, info):
         """Get all tags"""
         return Tag.objects.all()
     
-    def resolve_search_tags(self, info, keyword):
+    #Search tag by key word
+    search_tags = graphene.List(
+        TagType,
+        keyword=graphene.String(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0),
+    )
+    def resolve_search_tags(self, info, keyword, limit, offset):
         """ Filter tag name containing the keyword (case-insensitive) """
-        return Tag.objects.filter(name__icontains=keyword)[:10]  # Limit to 10 results
-
-    def resolve_article_comments(self, info, article_id):
+        return Tag.objects.filter(name__icontains=keyword)[offset:offset + limit]
+    
+# Comment queries
+    # Search latest cmt by article id 
+    latest_article_comments = graphene.List(
+        CommentType, article_id=graphene.Int(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0)
+    )
+    def resolve_latest_article_comments(self, info, article_id,limit, offset):
         """Get comments for an article"""
-        return Comment.objects.filter(article_id=article_id)
+        return Comment.objects.filter(article_id=article_id).order_by('-created_at')[offset:offset + limit]
+    
+    # Search top cmt by article id
+    top_liked_comments = graphene.List(
+        CommentType,
+        article_id=graphene.Int(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0)
+    )
+    def resolve_top_liked_comments(self, info, article_id, limit, offset):
+        """
+        Get top liked comments for an article (ordered by like_count descending)
+        """
+        return Comment.objects.filter(article_id=article_id).order_by('-like_count', '-created_at')[offset:offset + limit]
 
+    comment_article = graphene.Field(
+        NewsType,
+        comment_id=graphene.ID(required=True)
+    )
+    def resolve_comment_article(self, info, comment_id):
+        """
+        Given a comment ID, return the related article (News)
+        """
+        try:
+            comment = Comment.objects.select_related('article').get(pk=comment_id)
+            return comment.article  # Trả về News instance
+        except Comment.DoesNotExist:
+            return None
+        
+# Analytics queries
+    user_reading_history = graphene.List(ReadingHistoryType, user_id=graphene.Int(required=True))
     def resolve_user_reading_history(self, info, user_id):
         """Get user's reading history"""
         return ReadingHistory.objects.filter(user_id=user_id)
-    
+     
+# Like queries:
+    is_article_liked = graphene.Boolean(article_id=graphene.ID(required=True))
     def resolve_is_article_liked(self, info, article_id):
         """Check user liked article"""
         user = info.context.user
         if user.is_anonymous:
             return False
         return Like.objects.filter(user=user, article_id=article_id).exists()
-
+    
+    is_comment_liked = graphene.Boolean(comment_id=graphene.ID(required=True))
     def resolve_is_comment_liked(self, info, comment_id):
         """Check user liked comment"""
         user = info.context.user
@@ -805,6 +860,44 @@ class UpdateLikeStatus(graphene.Mutation):
         except Exception as e:
             return UpdateLikeStatus(success=False, errors="Unexpected error: " + str(e))
 
+class CreateReadingHistory(graphene.Mutation):
+    """
+    Record a user's article reading history
+    """
+    class Agruments:
+        article_id = graphene.ID(required=True)
+        ip_address = graphene.String(required=False)
+        user_agent = graphene.String(required=False)
+    success = graphene.Boolean()
+    errors = graphene.String()    
+
+    def mutate(self, info, article_id, ip_address=None, user_agent=None):
+        try:
+            user = info.context.user
+
+            # Ensure user is authenticated
+            if user.is_anonymous:
+                return CreateReadingHistory(success=False, errors="Authentication required.")
+
+            # Check if article exists
+            try:
+                article = News.objects.get(pk=article_id)
+            except News.DoesNotExist:
+                return CreateReadingHistory(success=False, errors="Article not found.")
+
+            # Create reading history record
+            ReadingHistory.objects.create(
+                user=user,
+                article=article,
+                ip_address=ip_address or info.context.META.get("REMOTE_ADDR", ""),
+                user_agent=user_agent or info.context.META.get("HTTP_USER_AGENT", ""),
+            )
+
+            return CreateReadingHistory(success=True, errors="Reading history recorded.")
+
+        except Exception as e:
+            return CreateReadingHistory(success=False, errors="Unexpected error: " + str(e))
+
 class Mutation(graphene.ObjectType):
     """
     API GraphQL Mutations
@@ -822,3 +915,4 @@ class Mutation(graphene.ObjectType):
     delete_category = DeleteCategory.Field()
     update_tag = UpdateTag.Field()
     delete_tag = DeleteTag.Field()
+    create_readinghistory = CreateReadingHistory.Field()
