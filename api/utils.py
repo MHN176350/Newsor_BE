@@ -55,8 +55,7 @@ def get_cloudinary_upload_signature():
     
     params = {
         'timestamp': timestamp,
-        'folder': 'news_articles',
-        'resource_type': 'image'
+        'folder': 'news_articles'
     }
     
     signature = cloudinary.utils.api_sign_request(params, settings.CLOUDINARY_STORAGE['API_SECRET'])
