@@ -3,8 +3,15 @@ from graphene_django import DjangoObjectType
 from django.contrib.auth.models import User
 from .models import (
     Category, Tag, UserProfile, News, Comment, 
-    Like, ReadingHistory, NewsletterSubscription
+    Like, ReadingHistory, NewsletterSubscription, ArticleImage
 )
+from .utils import sanitize_html_content, get_cloudinary_upload_signature
+import base64
+import io
+from PIL import Image
+import cloudinary.uploader
+import uuid
+from .cloudinary_utils import CloudinaryUtils
 
 
 class UserType(DjangoObjectType):
@@ -50,6 +57,9 @@ class UserProfileType(DjangoObjectType):
     GraphQL UserProfile type
     """
     avatar_url = graphene.String()  # Custom field for avatar URL
+    has_write_permission = graphene.Boolean()
+    has_admin_permission = graphene.Boolean()
+    has_manager_permission = graphene.Boolean()
     
     class Meta:
         model = UserProfile
@@ -59,15 +69,24 @@ class UserProfileType(DjangoObjectType):
         """
         Resolve avatar URL with fallback to default image
         """
-        if self.avatar:
-            try:
-                return str(self.avatar.url)
-            except Exception:
-                # If there's an error getting the cloudinary URL, return default
-                return "/static/images/default-avatar.svg"
+        avatar_url = self.avatar_url  # Use the new property method
+        if avatar_url:
+            return avatar_url
         else:
             # Return default avatar if no avatar is set
             return "/static/images/default-avatar.svg"
+    
+    def resolve_has_write_permission(self, info):
+        """Check if user has write permission"""
+        return self.role.lower() in ['writer', 'manager', 'admin']
+    
+    def resolve_has_admin_permission(self, info):
+        """Check if user has admin permission"""
+        return self.role.lower() == 'admin'
+    
+    def resolve_has_manager_permission(self, info):
+        """Check if user has manager permission"""
+        return self.role.lower() in ['manager', 'admin']
 
 
 class NewsType(DjangoObjectType):
@@ -84,12 +103,9 @@ class NewsType(DjangoObjectType):
         """
         Resolve featured image URL with fallback to default image
         """
-        if self.featured_image:
-            try:
-                return str(self.featured_image.url)
-            except Exception:
-                # If there's an error getting the cloudinary URL, return default
-                return "/static/images/default-news.svg"
+        featured_image_url = self.featured_image_url  # Use the new property method
+        if featured_image_url:
+            return featured_image_url
         else:
             # Return default news image if no image is set
             return "/static/images/default-news.svg"
@@ -102,6 +118,25 @@ class CommentType(DjangoObjectType):
     class Meta:
         model = Comment
         fields = '__all__'
+
+
+class ArticleImageType(DjangoObjectType):
+    """
+    GraphQL ArticleImage type
+    """
+    image_url = graphene.String()
+    
+    class Meta:
+        model = ArticleImage
+        exclude = ['image']  # Exclude the CloudinaryField from auto-generation
+    
+    def resolve_image_url(self, info):
+        """
+        Resolve image URL
+        """
+        image_url = self.image_url  # Use the new property method
+        return image_url or ""
+        return ""
 
 
 class LikeType(DjangoObjectType):
@@ -573,11 +608,14 @@ class CreateNews(graphene.Mutation):
                 slug = f"{original_slug}-{counter}"
                 counter += 1
 
+            # Sanitize HTML content
+            sanitized_content = sanitize_html_content(content)
+
             # Create news article
             news = News.objects.create(
                 title=title,
                 slug=slug,
-                content=content,
+                content=sanitized_content,
                 excerpt=excerpt,
                 author=user,
                 category=category,
@@ -762,6 +800,180 @@ class ChangeUserRole(graphene.Mutation):
             return ChangeUserRole(success=False, errors=[str(e)])
 
 
+class GetCloudinarySignature(graphene.Mutation):
+    """
+    Get signed upload parameters for Cloudinary
+    """
+    signature = graphene.String()
+    timestamp = graphene.String()
+    api_key = graphene.String()
+    cloud_name = graphene.String()
+    folder = graphene.String()
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info):
+        """
+        Generate Cloudinary upload signature
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return GetCloudinarySignature(success=False, errors=['Authentication required'])
+
+        try:
+            # Check if user has writer role or higher
+            profile = UserProfile.objects.get(user=user)
+            if profile.role.lower() not in ['writer', 'manager', 'admin']:
+                return GetCloudinarySignature(success=False, errors=['Permission denied. Writer role required.'])
+
+            upload_params = get_cloudinary_upload_signature()
+            
+            return GetCloudinarySignature(
+                signature=upload_params['signature'],
+                timestamp=str(upload_params['timestamp']),
+                api_key=upload_params['api_key'],
+                cloud_name=upload_params['cloud_name'],
+                folder=upload_params['folder'],
+                success=True,
+                errors=[]
+            )
+
+        except UserProfile.DoesNotExist:
+            return GetCloudinarySignature(success=False, errors=['User profile not found'])
+        except Exception as e:
+            return GetCloudinarySignature(success=False, errors=[str(e)])
+
+
+class UploadBase64Image(graphene.Mutation):
+    """
+    Upload base64 image to Cloudinary with proper sizing and optimization
+    """
+    class Arguments:
+        base64_data = graphene.String(required=True, description="Base64 encoded image data")
+        folder = graphene.String(default_value="newsor/uploads", description="Cloudinary folder")
+        max_width = graphene.Int(default_value=800, description="Maximum width for resizing")
+        max_height = graphene.Int(default_value=600, description="Maximum height for resizing")
+        quality = graphene.String(default_value="auto", description="Image quality (auto, 100, 80, etc.)")
+        format = graphene.String(default_value="auto", description="Image format (auto, jpg, png, webp)")
+
+    url = graphene.String()
+    public_id = graphene.String()
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, base64_data, folder="newsor/uploads", max_width=800, max_height=600, quality="auto", format="auto"):
+        """
+        Process base64 image and upload to Cloudinary
+        """
+        try:
+            # Remove data URL prefix if present
+            if base64_data.startswith('data:image'):
+                base64_data = base64_data.split(',')[1]
+            
+            # Decode base64 data
+            try:
+                image_data = base64.b64decode(base64_data)
+            except Exception as e:
+                return UploadBase64Image(success=False, errors=[f"Invalid base64 data: {str(e)}"])
+            
+            # Open image with PIL
+            try:
+                image = Image.open(io.BytesIO(image_data))
+            except Exception as e:
+                return UploadBase64Image(success=False, errors=[f"Invalid image data: {str(e)}"])
+            
+            # Convert RGBA to RGB if necessary
+            if image.mode == 'RGBA':
+                background = Image.new('RGB', image.size, (255, 255, 255))
+                background.paste(image, mask=image.split()[-1])
+                image = background
+            
+            # Resize image if needed
+            if image.width > max_width or image.height > max_height:
+                image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+            
+            # Convert back to bytes
+            output = io.BytesIO()
+            image.save(output, format='JPEG', quality=85, optimize=True)
+            output.seek(0)
+            
+            # Generate unique filename
+            unique_filename = f"upload_{uuid.uuid4().hex}"
+            
+            # Upload to Cloudinary
+            upload_result = cloudinary.uploader.upload(
+                output.getvalue(),
+                public_id=unique_filename,
+                folder=folder,
+                transformation=[
+                    {'quality': quality},
+                    {'fetch_format': format}
+                ],
+                resource_type="image"
+            )
+            
+            # Optimize URL for storage
+            optimized_url = CloudinaryUtils.optimize_for_storage(upload_result['secure_url'])
+            
+            return UploadBase64Image(
+                url=optimized_url,
+                public_id=upload_result['public_id'],
+                success=True,
+                errors=[]
+            )
+            
+        except Exception as e:
+            return UploadBase64Image(success=False, errors=[f"Upload failed: {str(e)}"])
+
+
+class UploadAvatarImage(graphene.Mutation):
+    """
+    Upload and set avatar image for user profile
+    """
+    class Arguments:
+        base64_data = graphene.String(required=True, description="Base64 encoded avatar image")
+
+    profile = graphene.Field(UserProfileType)
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, base64_data):
+        """
+        Upload avatar and update user profile
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return UploadAvatarImage(success=False, errors=['Authentication required'])
+
+        try:
+            # Upload the image with avatar-specific settings
+            upload_mutation = UploadBase64Image()
+            upload_result = upload_mutation.mutate(
+                info, 
+                base64_data=base64_data,
+                folder="newsor/avatars",
+                max_width=400,
+                max_height=400,
+                quality="auto",
+                format="auto"
+            )
+            
+            if not upload_result.success:
+                return UploadAvatarImage(success=False, errors=upload_result.errors)
+            
+            # Update user profile with new avatar
+            profile, created = UserProfile.objects.get_or_create(user=user)
+            profile.avatar = upload_result.url
+            profile.save()
+            
+            return UploadAvatarImage(profile=profile, success=True, errors=[])
+            
+        except Exception as e:
+            return UploadAvatarImage(success=False, errors=[f"Avatar upload failed: {str(e)}"])
+
+
+# ...existing mutations...
+
 class Mutation(graphene.ObjectType):
     """
     API GraphQL Mutations
@@ -773,3 +985,6 @@ class Mutation(graphene.ObjectType):
     create_tag = CreateTag.Field()
     create_comment = CreateComment.Field()
     change_user_role = ChangeUserRole.Field()
+    get_cloudinary_signature = GetCloudinarySignature.Field()
+    upload_base64_image = UploadBase64Image.Field()
+    upload_avatar_image = UploadAvatarImage.Field()
