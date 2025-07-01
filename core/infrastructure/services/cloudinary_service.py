@@ -15,7 +15,7 @@ class BleachContentSanitizationService(ContentSanitizationService):
     """Bleach implementation of content sanitization."""
 
     def sanitize(self, content: str) -> str:
-        """Sanitize HTML content to allow only safe tags and attributes."""
+       
         allowed_tags = [
             'p', 'br', 'strong', 'b', 'em', 'i', 'u', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
             'ul', 'ol', 'li', 'blockquote', 'a', 'img', 'div', 'span'
@@ -30,7 +30,7 @@ class BleachContentSanitizationService(ContentSanitizationService):
         
         allowed_protocols = ['http', 'https', 'data']
         
-        # Sanitize the HTML
+       
         clean_content = bleach.clean(
             content,
             tags=allowed_tags,

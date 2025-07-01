@@ -232,6 +232,8 @@ class Query(graphene.ObjectType):
                                   search=graphene.String(),
                                   category_id=graphene.Int(),
                                   tag_id=graphene.Int())
+    news_for_review = graphene.List(NewsType)
+    my_news = graphene.List(NewsType)
     
     # Category and Tag queries
     categories = graphene.List(CategoryType)
@@ -249,7 +251,7 @@ class Query(graphene.ObjectType):
     recent_activity = graphene.List(RecentActivityType, limit=graphene.Int())
 
     def resolve_hello(self, info, name):
-        """Simple hello world resolver"""
+       
         return f'Hello {name}'
     
     def resolve_me(self, info):
@@ -346,6 +348,32 @@ class Query(graphene.ObjectType):
         """Get all tags"""
         return Tag.objects.all()
 
+    def resolve_news_for_review(self, info):
+        """Get news articles that need review (for managers)"""
+        # Only allow managers and admins to access this
+        user = info.context.user
+        if not user.is_authenticated:
+            return []
+        
+        try:
+            profile = UserProfile.objects.get(user=user)
+            if profile.role.lower() not in ['manager', 'admin']:
+                return []
+        except UserProfile.DoesNotExist:
+            return []
+        
+        # Return articles that are in draft or pending status
+        return News.objects.filter(status__in=['draft', 'pending']).order_by('-created_at')
+
+    def resolve_my_news(self, info):
+        """Get current user's news articles"""
+        user = info.context.user
+        if not user.is_authenticated:
+            return []
+        
+        # Return all articles by the current user
+        return News.objects.filter(author=user).order_by('-created_at')
+
     def resolve_article_comments(self, info, article_id):
         """Get comments for an article"""
         return Comment.objects.filter(article_id=article_id, status='approved')
@@ -356,7 +384,7 @@ class Query(graphene.ObjectType):
     
     def resolve_dashboard_stats(self, info):
         """Get dashboard statistics"""
-        from datetime import datetime, timedelta
+        from datetime import datetime
         from django.db.models import Count, Sum
         
         # Check if user is admin or manager
@@ -972,6 +1000,156 @@ class UploadAvatarImage(graphene.Mutation):
             return UploadAvatarImage(success=False, errors=[f"Avatar upload failed: {str(e)}"])
 
 
+class UpdateNewsStatus(graphene.Mutation):
+    """
+    Update news article status (for managers)
+    """
+    class Arguments:
+        id = graphene.Int(required=True)
+        status = graphene.String(required=True)
+        review_comment = graphene.String()
+
+    news = graphene.Field(NewsType)
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, id, status, review_comment=None):
+        """
+        Update news article status mutation
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return UpdateNewsStatus(success=False, errors=['Authentication required'])
+
+        try:
+            # Check if user has manager role or higher
+            profile = UserProfile.objects.get(user=user)
+            if profile.role.lower() not in ['manager', 'admin']:
+                return UpdateNewsStatus(success=False, errors=['Permission denied. Manager role required.'])
+
+            # Get the news article
+            try:
+                news = News.objects.get(id=id)
+            except News.DoesNotExist:
+                return UpdateNewsStatus(success=False, errors=['News article not found'])
+
+            # Validate status
+            valid_statuses = ['draft', 'pending', 'published', 'rejected']
+            if status not in valid_statuses:
+                return UpdateNewsStatus(success=False, errors=['Invalid status'])
+
+            # Update the news article
+            news.status = status
+            if status == 'published':
+                from django.utils import timezone
+                news.published_at = timezone.now()
+            
+            news.save()
+
+            # TODO: Add review comment handling if needed (would require a separate model)
+            # For now, we'll just update the status
+
+            return UpdateNewsStatus(news=news, success=True, errors=[])
+
+        except UserProfile.DoesNotExist:
+            return UpdateNewsStatus(success=False, errors=['User profile not found'])
+        except Exception as e:
+            return UpdateNewsStatus(success=False, errors=[str(e)])
+
+
+class UpdateNews(graphene.Mutation):
+    """
+    Update an existing news article (for writers)
+    """
+    class Arguments:
+        id = graphene.Int(required=True)
+        title = graphene.String(required=True)
+        content = graphene.String(required=True)
+        excerpt = graphene.String(required=True)
+        category_id = graphene.Int(required=True)
+        tag_ids = graphene.List(graphene.Int)
+        featured_image = graphene.String()  # Cloudinary URL
+        meta_description = graphene.String()
+        meta_keywords = graphene.String()
+
+    news = graphene.Field(NewsType)
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, id, title, content, excerpt, category_id, tag_ids=None, 
+               featured_image=None, meta_description=None, meta_keywords=None):
+        """
+        Update news article mutation
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return UpdateNews(success=False, errors=['Authentication required'])
+
+        try:
+            # Check if user has writer role or higher
+            profile = UserProfile.objects.get(user=user)
+            if profile.role.lower() not in ['writer', 'manager', 'admin']:
+                return UpdateNews(success=False, errors=['Permission denied. Writer role required.'])
+
+            # Get the existing news article
+            try:
+                news = News.objects.get(id=id)
+            except News.DoesNotExist:
+                return UpdateNews(success=False, errors=['Article not found'])
+
+            # Check if user owns the article (unless they're admin/manager)
+            if profile.role.lower() not in ['admin', 'manager'] and news.author.id != user.id:
+                return UpdateNews(success=False, errors=['Permission denied. You can only edit your own articles.'])
+
+            # Check if article can be edited (only drafts and rejected articles)
+            if news.status.lower() not in ['draft', 'rejected']:
+                return UpdateNews(success=False, errors=['You can only edit articles that are in draft or rejected status.'])
+
+            # Check if category exists
+            try:
+                category = Category.objects.get(id=category_id)
+            except Category.DoesNotExist:
+                return UpdateNews(success=False, errors=['Category not found'])
+
+            # Sanitize HTML content
+            sanitized_content = sanitize_html_content(content)
+
+            # Update news article
+            news.title = title
+            news.content = sanitized_content
+            news.excerpt = excerpt
+            news.category = category
+            news.featured_image = featured_image or ''
+            news.meta_description = meta_description or ''
+            news.meta_keywords = meta_keywords or ''
+            
+            # Update slug if title changed
+            from django.utils.text import slugify
+            new_slug = slugify(title)
+            if new_slug != news.slug:
+                # Ensure slug is unique
+                counter = 1
+                original_slug = new_slug
+                while News.objects.filter(slug=new_slug).exclude(id=id).exists():
+                    new_slug = f"{original_slug}-{counter}"
+                    counter += 1
+                news.slug = new_slug
+            
+            news.save()
+
+            # Update tags if provided
+            if tag_ids is not None:
+                tags = Tag.objects.filter(id__in=tag_ids)
+                news.tags.set(tags)
+
+            return UpdateNews(news=news, success=True, errors=[])
+
+        except UserProfile.DoesNotExist:
+            return UpdateNews(success=False, errors=['User profile not found'])
+        except Exception as e:
+            return UpdateNews(success=False, errors=[str(e)])
+
+
 # ...existing mutations...
 
 class Mutation(graphene.ObjectType):
@@ -988,3 +1166,8 @@ class Mutation(graphene.ObjectType):
     get_cloudinary_signature = GetCloudinarySignature.Field()
     upload_base64_image = UploadBase64Image.Field()
     upload_avatar_image = UploadAvatarImage.Field()
+    update_news_status = UpdateNewsStatus.Field()
+    update_news = UpdateNews.Field()
+
+# Schema
+schema = graphene.Schema(query=Query, mutation=Mutation)
