@@ -38,9 +38,17 @@ class CategoryType(DjangoObjectType):
     """
     GraphQL Category type
     """
+    article_count = graphene.Int()
+    
     class Meta:
         model = Category
         fields = '__all__'
+    
+    def resolve_article_count(self, info):
+        """
+        Resolve the number of published articles in this category
+        """
+        return self.news_set.filter(status='published').count()
 
 
 class TagType(DjangoObjectType):
@@ -94,6 +102,10 @@ class NewsType(DjangoObjectType):
     GraphQL News type
     """
     featured_image_url = graphene.String()  # Custom field for featured image URL
+    likes_count = graphene.Int()
+    comments_count = graphene.Int()
+    read_count = graphene.Int()
+    is_liked_by_user = graphene.Boolean()
     
     class Meta:
         model = News
@@ -109,6 +121,33 @@ class NewsType(DjangoObjectType):
         else:
             # Return default news image if no image is set
             return "/static/images/default-news.svg"
+    
+    def resolve_likes_count(self, info):
+        """
+        Get the number of likes for this article
+        """
+        return self.likes.count()
+    
+    def resolve_comments_count(self, info):
+        """
+        Get the number of comments for this article
+        """
+        return self.comments.count()
+    
+    def resolve_read_count(self, info):
+        """
+        Get the read count (view count) for this article
+        """
+        return self.view_count
+    
+    def resolve_is_liked_by_user(self, info):
+        """
+        Check if the current user has liked this article
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return False
+        return self.likes.filter(user=user).exists()
 
 
 class CommentType(DjangoObjectType):
@@ -916,28 +955,40 @@ class UploadBase64Image(graphene.Mutation):
                 background.paste(image, mask=image.split()[-1])
                 image = background
             
-            # Resize image if needed
-            if image.width > max_width or image.height > max_height:
-                image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+            # Only resize if image is significantly larger than target
+            # Use a more gentle approach to preserve quality
+            if image.width > max_width * 1.5 or image.height > max_height * 1.5:
+                # Calculate new size maintaining aspect ratio
+                ratio = min(max_width / image.width, max_height / image.height)
+                new_width = int(image.width * ratio)
+                new_height = int(image.height * ratio)
+                
+                # Use high-quality resampling
+                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            # If image is only slightly larger, keep original size
             
-            # Convert back to bytes
+            # Convert back to bytes (use high quality to preserve image fidelity)
             output = io.BytesIO()
-            image.save(output, format='JPEG', quality=85, optimize=True)
+            if image.mode == 'RGBA':
+                # For PNG with transparency, save as PNG
+                image.save(output, format='PNG', optimize=False)
+            else:
+                # For regular images, save as JPEG with maximum quality
+                image.save(output, format='JPEG', quality=95, optimize=False)
             output.seek(0)
             
             # Generate unique filename
             unique_filename = f"upload_{uuid.uuid4().hex}"
             
-            # Upload to Cloudinary
+            # Upload to Cloudinary with minimal processing to preserve quality
             upload_result = cloudinary.uploader.upload(
                 output.getvalue(),
                 public_id=unique_filename,
                 folder=folder,
-                transformation=[
-                    {'quality': quality},
-                    {'fetch_format': format}
-                ],
-                resource_type="image"
+                # Remove quality transformation to avoid double compression
+                # Let Cloudinary handle optimization automatically
+                resource_type="image",
+                quality="auto:best"  # Use Cloudinary's best automatic quality
             )
             
             # Optimize URL for storage
@@ -1150,6 +1201,100 @@ class UpdateNews(graphene.Mutation):
             return UpdateNews(success=False, errors=[str(e)])
 
 
+class ToggleLike(graphene.Mutation):
+    """
+    Toggle like/unlike for articles or comments
+    """
+    class Arguments:
+        news_id = graphene.Int()
+        comment_id = graphene.Int()
+
+    success = graphene.Boolean()
+    liked = graphene.Boolean()
+    likes_count = graphene.Int()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, news_id=None, comment_id=None):
+        """
+        Toggle like mutation
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return ToggleLike(success=False, errors=['Authentication required'])
+
+        try:
+            # Validate input - must provide either news_id or comment_id
+            if not news_id and not comment_id:
+                return ToggleLike(success=False, errors=['Must provide either news_id or comment_id'])
+            
+            if news_id and comment_id:
+                return ToggleLike(success=False, errors=['Cannot like both news and comment in same request'])
+
+            if news_id:
+                # Handle news like
+                try:
+                    news = News.objects.get(id=news_id)
+                except News.DoesNotExist:
+                    return ToggleLike(success=False, errors=['News article not found'])
+
+                like, created = Like.objects.get_or_create(
+                    user=user,
+                    article=news,
+                    defaults={'comment': None}
+                )
+
+                if not created:
+                    # Unlike - remove the like
+                    like.delete()
+                    liked = False
+                else:
+                    # Like created
+                    liked = True
+
+                # Get updated like count
+                likes_count = news.likes.count()
+                
+                return ToggleLike(
+                    success=True,
+                    liked=liked,
+                    likes_count=likes_count,
+                    errors=[]
+                )
+
+            elif comment_id:
+                # Handle comment like
+                try:
+                    comment = Comment.objects.get(id=comment_id)
+                except Comment.DoesNotExist:
+                    return ToggleLike(success=False, errors=['Comment not found'])
+
+                like, created = Like.objects.get_or_create(
+                    user=user,
+                    comment=comment,
+                    defaults={'article': None}
+                )
+
+                if not created:
+                    # Unlike - remove the like
+                    like.delete()
+                    liked = False
+                else:
+                    # Like created
+                    liked = True
+
+                # Get updated like count
+                likes_count = comment.likes.count()
+                
+                return ToggleLike(
+                    success=True,
+                    liked=liked,
+                    likes_count=likes_count,
+                    errors=[]
+                )
+
+        except Exception as e:
+            return ToggleLike(success=False, errors=[str(e)])
+
 # ...existing mutations...
 
 class Mutation(graphene.ObjectType):
@@ -1168,6 +1313,8 @@ class Mutation(graphene.ObjectType):
     upload_avatar_image = UploadAvatarImage.Field()
     update_news_status = UpdateNewsStatus.Field()
     update_news = UpdateNews.Field()
+    toggle_like = ToggleLike.Field()
+    toggle_like = ToggleLike.Field()
 
 # Schema
 schema = graphene.Schema(query=Query, mutation=Mutation)
