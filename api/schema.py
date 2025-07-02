@@ -3,7 +3,7 @@ from graphene_django import DjangoObjectType
 from django.contrib.auth.models import User
 from .models import (
     Category, Tag, UserProfile, News, Comment, 
-    Like, ReadingHistory, NewsletterSubscription, ArticleImage
+    Like, ReadingHistory, NewsletterSubscription, ArticleImage, Notification
 )
 from .utils import sanitize_html_content, get_cloudinary_upload_signature
 import base64
@@ -48,16 +48,24 @@ class CategoryType(DjangoObjectType):
         """
         Resolve the number of published articles in this category
         """
-        return self.news_set.filter(status='published').count()
+        return self.articles.filter(status='published').count()
 
 
 class TagType(DjangoObjectType):
     """
     GraphQL Tag type
     """
+    article_count = graphene.Int()
+    
     class Meta:
         model = Tag
         fields = '__all__'
+    
+    def resolve_article_count(self, info):
+        """
+        Resolve the number of published articles with this tag
+        """
+        return self.articles.filter(status='published').count()
 
 
 class UserProfileType(DjangoObjectType):
@@ -205,6 +213,15 @@ class NewsletterSubscriptionType(DjangoObjectType):
         fields = '__all__'
 
 
+class NotificationType(DjangoObjectType):
+    """
+    GraphQL Notification type
+    """
+    class Meta:
+        model = Notification
+        fields = '__all__'
+
+
 class DashboardStatsType(graphene.ObjectType):
     """
     Dashboard statistics type
@@ -278,6 +295,7 @@ class Query(graphene.ObjectType):
     categories = graphene.List(CategoryType)
     category = graphene.Field(CategoryType, id=graphene.Int())
     tags = graphene.List(TagType)
+    admin_tags = graphene.List(TagType)  # Admin-only query to get all tags including inactive
     
     # Comment queries
     article_comments = graphene.List(CommentType, article_id=graphene.Int(required=True))
@@ -288,6 +306,11 @@ class Query(graphene.ObjectType):
     # Dashboard queries
     dashboard_stats = graphene.Field(DashboardStatsType)
     recent_activity = graphene.List(RecentActivityType, limit=graphene.Int())
+    
+    # Notification queries
+    notifications = graphene.List(NotificationType)
+    unread_notifications = graphene.List(NotificationType)
+    notification_count = graphene.Int()
 
     def resolve_hello(self, info, name):
        
@@ -384,7 +407,33 @@ class Query(graphene.ObjectType):
             return None
 
     def resolve_tags(self, info):
-        """Get all tags"""
+        """Get all active tags for public use"""
+        # For admin users, show all tags. For others, show only active tags
+        user = info.context.user
+        if user.is_authenticated:
+            try:
+                profile = UserProfile.objects.get(user=user)
+                if profile.role.lower() == 'admin':
+                    return Tag.objects.all()
+            except UserProfile.DoesNotExist:
+                pass
+        
+        # For non-admin users, return only active tags
+        return Tag.objects.filter(is_active=True)
+
+    def resolve_admin_tags(self, info):
+        """Get all tags for admin management (admin only)"""
+        user = info.context.user
+        if not user.is_authenticated:
+            return []
+        
+        try:
+            profile = UserProfile.objects.get(user=user)
+            if profile.role.lower() != 'admin':
+                return []
+        except UserProfile.DoesNotExist:
+            return []
+        
         return Tag.objects.all()
 
     def resolve_news_for_review(self, info):
@@ -517,6 +566,38 @@ class Query(graphene.ObjectType):
             ))
         
         return activities
+
+    def resolve_notifications(self, info):
+        """Get all notifications for the current user"""
+        user = info.context.user
+        if not user.is_authenticated:
+            return []
+        
+        return Notification.objects.filter(
+            recipient=user
+        ).select_related('sender', 'article').order_by('-created_at')
+
+    def resolve_unread_notifications(self, info):
+        """Get unread notifications for the current user"""
+        user = info.context.user
+        if not user.is_authenticated:
+            return []
+        
+        return Notification.objects.filter(
+            recipient=user,
+            is_read=False
+        ).select_related('sender', 'article').order_by('-created_at')
+
+    def resolve_notification_count(self, info):
+        """Get count of unread notifications for the current user"""
+        user = info.context.user
+        if not user.is_authenticated:
+            return 0
+        
+        return Notification.objects.filter(
+            recipient=user,
+            is_read=False
+        ).count()
 
     # ...existing code...
     
@@ -765,6 +846,54 @@ class CreateTag(graphene.Mutation):
             return CreateTag(tag = tag, success=True, errors="Tag created successfully.")
         except Exception as e:
             return CreateTag(success=False, errors="Unexpected error: " + str(e), tag=None)
+        
+class ToggleTag(graphene.Mutation):
+    """
+    Toggle tag active status (admin only)
+    """
+    class Arguments:
+        id = graphene.Int(required=True)
+    
+    tag = graphene.Field(TagType)
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, id):
+        try:
+            # Check if user is authenticated and is admin
+            user = info.context.user
+            if not user.is_authenticated:
+                return ToggleTag(success=False, errors=["User not authenticated"])
+            
+            # Check if user has admin role
+            try:
+                user_profile = user.profile
+                if user_profile.role.lower() != 'admin':
+                    return ToggleTag(success=False, errors=["Admin access required"])
+            except UserProfile.DoesNotExist:
+                return ToggleTag(success=False, errors=["User profile not found"])
+
+            # Get the tag
+            try:
+                tag = Tag.objects.get(id=id)
+            except Tag.DoesNotExist:
+                return ToggleTag(success=False, errors=["Tag not found"])
+
+            # Toggle the is_active status
+            tag.is_active = not tag.is_active
+            tag.save()
+
+            # If tag is being deactivated, archive all articles with this tag
+            if not tag.is_active:
+                articles_with_tag = News.objects.filter(tags=tag, status__in=['published', 'draft', 'pending'])
+                for article in articles_with_tag:
+                    article.status = 'archived'
+                    article.save()
+
+            return ToggleTag(tag=tag, success=True, errors=[])
+
+        except Exception as e:
+            return ToggleTag(success=False, errors=[str(e)])
         
 class CreateComment(graphene.Mutation):
     """
@@ -1090,6 +1219,7 @@ class UpdateNewsStatus(graphene.Mutation):
                 return UpdateNewsStatus(success=False, errors=['Invalid status'])
 
             # Update the news article
+            old_status = news.status
             news.status = status
             if status == 'published':
                 from django.utils import timezone
@@ -1097,8 +1227,16 @@ class UpdateNewsStatus(graphene.Mutation):
             
             news.save()
 
-            # TODO: Add review comment handling if needed (would require a separate model)
-            # For now, we'll just update the status
+            # Create notifications based on status change
+            from .notification_service import NotificationService
+            
+            if old_status != status:
+                if status == 'published':
+                    NotificationService.notify_writer_of_publication(news)
+                elif status == 'approved':
+                    NotificationService.notify_writer_of_approval(news, user)
+                elif status == 'rejected':
+                    NotificationService.notify_writer_of_rejection(news, user, review_comment)
 
             return UpdateNewsStatus(news=news, success=True, errors=[])
 
@@ -1297,6 +1435,101 @@ class ToggleLike(graphene.Mutation):
 
 # ...existing mutations...
 
+class MarkNotificationAsRead(graphene.Mutation):
+    """
+    Mark a notification as read
+    """
+    class Arguments:
+        notification_id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+    notification = graphene.Field(NotificationType)
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, notification_id):
+        user = info.context.user
+        if not user.is_authenticated:
+            return MarkNotificationAsRead(success=False, errors=["Authentication required"])
+
+        try:
+            notification = Notification.objects.get(id=notification_id, recipient=user)
+            notification.mark_as_read()
+            return MarkNotificationAsRead(success=True, notification=notification)
+        except Notification.DoesNotExist:
+            return MarkNotificationAsRead(success=False, errors=["Notification not found"])
+        except Exception as e:
+            return MarkNotificationAsRead(success=False, errors=[str(e)])
+
+
+class MarkAllNotificationsAsRead(graphene.Mutation):
+    """
+    Mark all notifications as read for the current user
+    """
+    success = graphene.Boolean()
+    count = graphene.Int()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info):
+        user = info.context.user
+        if not user.is_authenticated:
+            return MarkAllNotificationsAsRead(success=False, errors=["Authentication required"])
+
+        try:
+            from .notification_service import NotificationService
+            count = NotificationService.mark_notifications_as_read(user)
+            return MarkAllNotificationsAsRead(success=True, count=count)
+        except Exception as e:
+            return MarkAllNotificationsAsRead(success=False, errors=[str(e)])
+
+
+class SubmitNewsForReview(graphene.Mutation):
+    """
+    Submit a news article for review (changes status from draft to pending)
+    """
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    news = graphene.Field(NewsType)
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, id):
+        user = info.context.user
+        if not user.is_authenticated:
+            return SubmitNewsForReview(success=False, errors=["Authentication required"])
+
+        try:
+            # Check if user has writer role or higher
+            profile = UserProfile.objects.get(user=user)
+            if profile.role.lower() not in ['writer', 'manager', 'admin']:
+                return SubmitNewsForReview(success=False, errors=["Permission denied. Writer role required."])
+
+            # Get the news article
+            try:
+                news = News.objects.get(id=id, author=user)
+            except News.DoesNotExist:
+                return SubmitNewsForReview(success=False, errors=["News article not found or you don't have permission to modify it"])
+
+            # Check if article is in draft status
+            if news.status != 'draft':
+                return SubmitNewsForReview(success=False, errors=["Article must be in draft status to submit for review"])
+
+            # Update status to pending
+            news.status = 'pending'
+            news.save()
+
+            # Notify managers about the submission
+            from .notification_service import NotificationService
+            NotificationService.notify_managers_of_submission(news)
+
+            return SubmitNewsForReview(news=news, success=True, errors=[])
+
+        except UserProfile.DoesNotExist:
+            return SubmitNewsForReview(success=False, errors=["User profile not found"])
+        except Exception as e:
+            return SubmitNewsForReview(success=False, errors=[str(e)])
+
+
 class Mutation(graphene.ObjectType):
     """
     API GraphQL Mutations
@@ -1306,15 +1539,22 @@ class Mutation(graphene.ObjectType):
     create_news = CreateNews.Field()
     create_category = CreateCategory.Field()
     create_tag = CreateTag.Field()
+    toggle_tag = ToggleTag.Field()
     create_comment = CreateComment.Field()
     change_user_role = ChangeUserRole.Field()
     get_cloudinary_signature = GetCloudinarySignature.Field()
     upload_base64_image = UploadBase64Image.Field()
     upload_avatar_image = UploadAvatarImage.Field()
     update_news_status = UpdateNewsStatus.Field()
+    submit_news_for_review = SubmitNewsForReview.Field()
     update_news = UpdateNews.Field()
     toggle_like = ToggleLike.Field()
-    toggle_like = ToggleLike.Field()
+    mark_notification_as_read = MarkNotificationAsRead.Field()
+    mark_all_notifications_as_read = MarkAllNotificationsAsRead.Field()
+    mark_notification_as_read = MarkNotificationAsRead.Field()
+    mark_all_notifications_as_read = MarkAllNotificationsAsRead.Field()
+    submit_news_for_review = SubmitNewsForReview.Field()
+    toggle_tag = ToggleTag.Field()
 
 # Schema
 schema = graphene.Schema(query=Query, mutation=Mutation)
