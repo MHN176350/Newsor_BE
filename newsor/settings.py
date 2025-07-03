@@ -1,4 +1,3 @@
-
 from pathlib import Path
 from decouple import config
 import cloudinary
@@ -31,6 +30,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'channels',  # Add channels for WebSocket support
     'rest_framework',
     'corsheaders',
     'graphene_django',
@@ -75,6 +75,18 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'newsor.wsgi.application'
+ASGI_APPLICATION = 'newsor.asgi.application'  # Add ASGI for WebSocket support
+
+
+# Channels configuration
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [("127.0.0.1", 6379)],
+        },
+    },
+}
 
 
 # Database
@@ -152,6 +164,7 @@ GRAPHENE = {
     'MIDDLEWARE': [
         'graphql_jwt.middleware.JSONWebTokenMiddleware',
     ],
+    'CAMELCASE_ERRORS': True,
 }
 
 # JWT Authentication configuration
@@ -171,8 +184,6 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
 ]
 
 CORS_ALLOW_CREDENTIALS = True

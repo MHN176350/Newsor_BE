@@ -1,6 +1,9 @@
 from django.contrib.auth.models import User
 from django.utils import timezone
 from .models import News, Notification
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+import json
 
 
 class NotificationService:
@@ -30,8 +33,39 @@ class NotificationService:
                 article=article
             )
             notifications_created.append(notification)
+            
+            # Send real-time notification
+            NotificationService._send_realtime_notification(manager.id, notification)
         
         return notifications_created
+    
+    @staticmethod
+    def _send_realtime_notification(user_id, notification):
+        """
+        Send real-time notification via WebSocket
+        """
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            # Serialize notification data
+            notification_data = {
+                'id': str(notification.id),
+                'message': notification.message,
+                'notificationType': notification.notification_type,
+                'createdAt': notification.created_at.isoformat(),
+                'article': {
+                    'slug': notification.article.slug if notification.article else None
+                } if notification.article else None
+            }
+            
+            # Send to user's group
+            group_name = f'notifications_{user_id}'
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    'type': 'notification_message',
+                    'notification': notification_data
+                }
+            )
     
     @staticmethod
     def notify_writer_of_approval(article, approved_by):
@@ -46,6 +80,10 @@ class NotificationService:
             message=f'Your article "{article.title}" has been approved by {approved_by.get_full_name() or approved_by.username}.',
             article=article
         )
+        
+        # Send real-time notification
+        NotificationService._send_realtime_notification(article.author.id, notification)
+        
         return notification
     
     @staticmethod
@@ -65,6 +103,10 @@ class NotificationService:
             message=message,
             article=article
         )
+        
+        # Send real-time notification
+        NotificationService._send_realtime_notification(article.author.id, notification)
+        
         return notification
     
     @staticmethod
@@ -79,6 +121,10 @@ class NotificationService:
             message=f'Your article "{article.title}" has been published and is now live!',
             article=article
         )
+        
+        # Send real-time notification
+        NotificationService._send_realtime_notification(article.author.id, notification)
+        
         return notification
     
     @staticmethod

@@ -669,14 +669,14 @@ class UpdateUserProfile(graphene.Mutation):
     class Arguments:
         bio = graphene.String()
         phone = graphene.String()
-        date_of_birth = graphene.Date()
+        dateOfBirth = graphene.Date()
         avatar = graphene.String()  # Cloudinary URL
 
     profile = graphene.Field(UserProfileType)
     success = graphene.Boolean()
     errors = graphene.List(graphene.String)
 
-    def mutate(self, info, bio=None, phone=None, date_of_birth=None, avatar=None):
+    def mutate(self, info, bio=None, phone=None, dateOfBirth=None, avatar=None):
         """
         Update user profile mutation
         """
@@ -691,8 +691,8 @@ class UpdateUserProfile(graphene.Mutation):
                 profile.bio = bio
             if phone is not None:
                 profile.phone = phone
-            if date_of_birth is not None:
-                profile.date_of_birth = date_of_birth
+            if dateOfBirth is not None:
+                profile.date_of_birth = dateOfBirth
             if avatar is not None:
                 profile.avatar = avatar
                 
@@ -706,6 +706,44 @@ class UpdateUserProfile(graphene.Mutation):
             return UpdateUserProfile(success=False, errors=[str(e)])
 
 
+class ChangePassword(graphene.Mutation):
+    """
+    Change user password
+    """
+    class Arguments:
+        currentPassword = graphene.String(required=True)
+        newPassword = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, currentPassword, newPassword):
+        """
+        Change user password mutation
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return ChangePassword(success=False, errors=['Authentication required'])
+
+        try:
+            # Check if current password is correct
+            if not user.check_password(currentPassword):
+                return ChangePassword(success=False, errors=['Current password is incorrect'])
+
+            # Validate new password
+            if len(newPassword) < 8:
+                return ChangePassword(success=False, errors=['New password must be at least 8 characters long'])
+
+            # Set new password
+            user.set_password(newPassword)
+            user.save()
+            
+            return ChangePassword(success=True, errors=[])
+        
+        except Exception as e:
+            return ChangePassword(success=False, errors=[str(e)])
+
+
 class CreateNews(graphene.Mutation):
     """
     Create a new news article (for writers)
@@ -714,18 +752,18 @@ class CreateNews(graphene.Mutation):
         title = graphene.String(required=True)
         content = graphene.String(required=True)
         excerpt = graphene.String(required=True)
-        category_id = graphene.Int(required=True)
-        tag_ids = graphene.List(graphene.Int)
-        featured_image = graphene.String()  # Cloudinary URL
-        meta_description = graphene.String()
-        meta_keywords = graphene.String()
+        categoryId = graphene.Int(required=True)
+        tagIds = graphene.List(graphene.Int)
+        featuredImage = graphene.String()  # Cloudinary URL
+        metaDescription = graphene.String()
+        metaKeywords = graphene.String()
 
     news = graphene.Field(NewsType)
     success = graphene.Boolean()
     errors = graphene.List(graphene.String)
 
-    def mutate(self, info, title, content, excerpt, category_id, tag_ids=None, 
-               featured_image=None, meta_description=None, meta_keywords=None):
+    def mutate(self, info, title, content, excerpt, categoryId, tagIds=None, 
+               featuredImage=None, metaDescription=None, metaKeywords=None):
         """
         Create news article mutation
         """
@@ -741,7 +779,7 @@ class CreateNews(graphene.Mutation):
 
             # Check if category exists
             try:
-                category = Category.objects.get(id=category_id)
+                category = Category.objects.get(id=categoryId)
             except Category.DoesNotExist:
                 return CreateNews(success=False, errors=['Category not found'])
 
@@ -767,15 +805,15 @@ class CreateNews(graphene.Mutation):
                 excerpt=excerpt,
                 author=user,
                 category=category,
-                featured_image=featured_image or '',
-                meta_description=meta_description or '',
-                meta_keywords=meta_keywords or '',
+                featured_image=featuredImage or '',
+                meta_description=metaDescription or '',
+                meta_keywords=metaKeywords or '',
                 status='draft'  # Default to draft
             )
 
             # Add tags if provided
-            if tag_ids:
-                tags = Tag.objects.filter(id__in=tag_ids)
+            if tagIds:
+                tags = Tag.objects.filter(id__in=tagIds)
                 news.tags.set(tags)
 
             return CreateNews(news=news, success=True, errors=[])
@@ -901,15 +939,15 @@ class CreateComment(graphene.Mutation):
     """
 
     class Arguments:
-        article_id = graphene.ID(required=True)
+        articleId = graphene.ID(required=True)
         content = graphene.String(required=True)
-        parent_id = graphene.ID(required=False)
+        parentId = graphene.ID(required=False)
 
     comment = graphene.Field(CommentType)
     success = graphene.Boolean()
     errors = graphene.String()
 
-    def mutate(self, info, article_id, content, parent_id=None):
+    def mutate(self, info, articleId, content, parentId=None):
         try:
             user = info.context.user
 
@@ -919,15 +957,15 @@ class CreateComment(graphene.Mutation):
 
             # Check if the article exists
             try:
-                article = News.objects.get(pk=article_id)
+                article = News.objects.get(pk=articleId)
             except News.DoesNotExist:
                 return CreateComment(success=False, errors="Article not found.", comment=None)
 
             # Check if parent comment exists, if provided
             parent = None
-            if parent_id:
+            if parentId:
                 try:
-                    parent = Comment.objects.get(pk=parent_id, article=article)
+                    parent = Comment.objects.get(pk=parentId, article=article)
                 except Comment.DoesNotExist:
                     return CreateComment(success=False, errors="Parent comment not found.", comment=None)
 
@@ -949,14 +987,14 @@ class ChangeUserRole(graphene.Mutation):
     Change user role (admin only)
     """
     class Arguments:
-        user_id = graphene.Int(required=True)
-        new_role = graphene.String(required=True)
+        userId = graphene.Int(required=True)
+        newRole = graphene.String(required=True)
 
     success = graphene.Boolean()
     errors = graphene.List(graphene.String)
     user = graphene.Field(UserType)
 
-    def mutate(self, info, user_id, new_role):
+    def mutate(self, info, userId, newRole):
         """
         Change user role mutation (admin only)
         """
@@ -972,18 +1010,18 @@ class ChangeUserRole(graphene.Mutation):
 
             # Validate new role
             valid_roles = ['reader', 'writer', 'manager', 'admin']
-            if new_role not in valid_roles:
+            if newRole not in valid_roles:
                 return ChangeUserRole(success=False, errors=[f'Invalid role. Must be one of: {", ".join(valid_roles)}'])
 
             # Get target user
-            target_user = User.objects.get(id=user_id)
+            target_user = User.objects.get(id=userId)
             target_profile, created = UserProfile.objects.get_or_create(
                 user=target_user,
-                defaults={'role': new_role}
+                defaults={'role': newRole}
             )
             
             if not created:
-                target_profile.role = new_role
+                target_profile.role = newRole
                 target_profile.save()
 
             return ChangeUserRole(success=True, errors=[], user=target_user)
@@ -1045,10 +1083,10 @@ class UploadBase64Image(graphene.Mutation):
     Upload base64 image to Cloudinary with proper sizing and optimization
     """
     class Arguments:
-        base64_data = graphene.String(required=True, description="Base64 encoded image data")
+        base64Data = graphene.String(required=True, description="Base64 encoded image data")
         folder = graphene.String(default_value="newsor/uploads", description="Cloudinary folder")
-        max_width = graphene.Int(default_value=800, description="Maximum width for resizing")
-        max_height = graphene.Int(default_value=600, description="Maximum height for resizing")
+        maxWidth = graphene.Int(default_value=800, description="Maximum width for resizing")
+        maxHeight = graphene.Int(default_value=600, description="Maximum height for resizing")
         quality = graphene.String(default_value="auto", description="Image quality (auto, 100, 80, etc.)")
         format = graphene.String(default_value="auto", description="Image format (auto, jpg, png, webp)")
 
@@ -1057,18 +1095,18 @@ class UploadBase64Image(graphene.Mutation):
     success = graphene.Boolean()
     errors = graphene.List(graphene.String)
 
-    def mutate(self, info, base64_data, folder="newsor/uploads", max_width=800, max_height=600, quality="auto", format="auto"):
+    def mutate(self, info, base64Data, folder="newsor/uploads", maxWidth=800, maxHeight=600, quality="auto", format="auto"):
         """
         Process base64 image and upload to Cloudinary
         """
         try:
             # Remove data URL prefix if present
-            if base64_data.startswith('data:image'):
-                base64_data = base64_data.split(',')[1]
+            if base64Data.startswith('data:image'):
+                base64Data = base64Data.split(',')[1]
             
             # Decode base64 data
             try:
-                image_data = base64.b64decode(base64_data)
+                image_data = base64.b64decode(base64Data)
             except Exception as e:
                 return UploadBase64Image(success=False, errors=[f"Invalid base64 data: {str(e)}"])
             
@@ -1086,9 +1124,9 @@ class UploadBase64Image(graphene.Mutation):
             
             # Only resize if image is significantly larger than target
             # Use a more gentle approach to preserve quality
-            if image.width > max_width * 1.5 or image.height > max_height * 1.5:
+            if image.width > maxWidth * 1.5 or image.height > maxHeight * 1.5:
                 # Calculate new size maintaining aspect ratio
-                ratio = min(max_width / image.width, max_height / image.height)
+                ratio = min(maxWidth / image.width, maxHeight / image.height)
                 new_width = int(image.width * ratio)
                 new_height = int(image.height * ratio)
                 
@@ -1139,13 +1177,13 @@ class UploadAvatarImage(graphene.Mutation):
     Upload and set avatar image for user profile
     """
     class Arguments:
-        base64_data = graphene.String(required=True, description="Base64 encoded avatar image")
+        base64Data = graphene.String(required=True, description="Base64 encoded avatar image")
 
     profile = graphene.Field(UserProfileType)
     success = graphene.Boolean()
     errors = graphene.List(graphene.String)
 
-    def mutate(self, info, base64_data):
+    def mutate(self, info, base64Data):
         """
         Upload avatar and update user profile
         """
@@ -1158,10 +1196,10 @@ class UploadAvatarImage(graphene.Mutation):
             upload_mutation = UploadBase64Image()
             upload_result = upload_mutation.mutate(
                 info, 
-                base64_data=base64_data,
+                base64Data=base64Data,
                 folder="newsor/avatars",
-                max_width=400,
-                max_height=400,
+                maxWidth=400,
+                maxHeight=400,
                 quality="auto",
                 format="auto"
             )
@@ -1255,18 +1293,18 @@ class UpdateNews(graphene.Mutation):
         title = graphene.String(required=True)
         content = graphene.String(required=True)
         excerpt = graphene.String(required=True)
-        category_id = graphene.Int(required=True)
-        tag_ids = graphene.List(graphene.Int)
-        featured_image = graphene.String()  # Cloudinary URL
-        meta_description = graphene.String()
-        meta_keywords = graphene.String()
+        categoryId = graphene.Int(required=True)
+        tagIds = graphene.List(graphene.Int)
+        featuredImage = graphene.String()  # Cloudinary URL
+        metaDescription = graphene.String()
+        metaKeywords = graphene.String()
 
     news = graphene.Field(NewsType)
     success = graphene.Boolean()
     errors = graphene.List(graphene.String)
 
-    def mutate(self, info, id, title, content, excerpt, category_id, tag_ids=None, 
-               featured_image=None, meta_description=None, meta_keywords=None):
+    def mutate(self, info, id, title, content, excerpt, categoryId, tagIds=None, 
+               featuredImage=None, metaDescription=None, metaKeywords=None):
         """
         Update news article mutation
         """
@@ -1296,7 +1334,7 @@ class UpdateNews(graphene.Mutation):
 
             # Check if category exists
             try:
-                category = Category.objects.get(id=category_id)
+                category = Category.objects.get(id=categoryId)
             except Category.DoesNotExist:
                 return UpdateNews(success=False, errors=['Category not found'])
 
@@ -1308,9 +1346,9 @@ class UpdateNews(graphene.Mutation):
             news.content = sanitized_content
             news.excerpt = excerpt
             news.category = category
-            news.featured_image = featured_image or ''
-            news.meta_description = meta_description or ''
-            news.meta_keywords = meta_keywords or ''
+            news.featured_image = featuredImage or ''
+            news.meta_description = metaDescription or ''
+            news.meta_keywords = metaKeywords or ''
             
             # Update slug if title changed
             from django.utils.text import slugify
@@ -1324,11 +1362,20 @@ class UpdateNews(graphene.Mutation):
                     counter += 1
                 news.slug = new_slug
             
+            # Change status to pending after update (for review)
+            old_status = news.status
+            news.status = 'pending'
+            
             news.save()
+            
+            # Notify managers about the update if status changed
+            if old_status != 'pending':
+                from .notification_service import NotificationService
+                NotificationService.notify_managers_of_submission(news)
 
             # Update tags if provided
-            if tag_ids is not None:
-                tags = Tag.objects.filter(id__in=tag_ids)
+            if tagIds is not None:
+                tags = Tag.objects.filter(id__in=tagIds)
                 news.tags.set(tags)
 
             return UpdateNews(news=news, success=True, errors=[])
@@ -1344,15 +1391,15 @@ class ToggleLike(graphene.Mutation):
     Toggle like/unlike for articles or comments
     """
     class Arguments:
-        news_id = graphene.Int()
-        comment_id = graphene.Int()
+        newsId = graphene.Int()
+        commentId = graphene.Int()
 
     success = graphene.Boolean()
     liked = graphene.Boolean()
     likes_count = graphene.Int()
     errors = graphene.List(graphene.String)
 
-    def mutate(self, info, news_id=None, comment_id=None):
+    def mutate(self, info, newsId=None, commentId=None):
         """
         Toggle like mutation
         """
@@ -1361,17 +1408,17 @@ class ToggleLike(graphene.Mutation):
             return ToggleLike(success=False, errors=['Authentication required'])
 
         try:
-            # Validate input - must provide either news_id or comment_id
-            if not news_id and not comment_id:
-                return ToggleLike(success=False, errors=['Must provide either news_id or comment_id'])
+            # Validate input - must provide either newsId or commentId
+            if not newsId and not commentId:
+                return ToggleLike(success=False, errors=['Must provide either newsId or commentId'])
             
-            if news_id and comment_id:
+            if newsId and commentId:
                 return ToggleLike(success=False, errors=['Cannot like both news and comment in same request'])
 
-            if news_id:
+            if newsId:
                 # Handle news like
                 try:
-                    news = News.objects.get(id=news_id)
+                    news = News.objects.get(id=newsId)
                 except News.DoesNotExist:
                     return ToggleLike(success=False, errors=['News article not found'])
 
@@ -1399,10 +1446,10 @@ class ToggleLike(graphene.Mutation):
                     errors=[]
                 )
 
-            elif comment_id:
+            elif commentId:
                 # Handle comment like
                 try:
-                    comment = Comment.objects.get(id=comment_id)
+                    comment = Comment.objects.get(id=commentId)
                 except Comment.DoesNotExist:
                     return ToggleLike(success=False, errors=['Comment not found'])
 
@@ -1440,19 +1487,19 @@ class MarkNotificationAsRead(graphene.Mutation):
     Mark a notification as read
     """
     class Arguments:
-        notification_id = graphene.Int(required=True)
+        notificationId = graphene.Int(required=True)
 
     success = graphene.Boolean()
     notification = graphene.Field(NotificationType)
     errors = graphene.List(graphene.String)
 
-    def mutate(self, info, notification_id):
+    def mutate(self, info, notificationId):
         user = info.context.user
         if not user.is_authenticated:
             return MarkNotificationAsRead(success=False, errors=["Authentication required"])
 
         try:
-            notification = Notification.objects.get(id=notification_id, recipient=user)
+            notification = Notification.objects.get(id=notificationId, recipient=user)
             notification.mark_as_read()
             return MarkNotificationAsRead(success=True, notification=notification)
         except Notification.DoesNotExist:
@@ -1536,6 +1583,7 @@ class Mutation(graphene.ObjectType):
     """
     create_user = CreateUser.Field()
     update_user_profile = UpdateUserProfile.Field()
+    change_password = ChangePassword.Field()
     create_news = CreateNews.Field()
     create_category = CreateCategory.Field()
     create_tag = CreateTag.Field()
@@ -1551,10 +1599,22 @@ class Mutation(graphene.ObjectType):
     toggle_like = ToggleLike.Field()
     mark_notification_as_read = MarkNotificationAsRead.Field()
     mark_all_notifications_as_read = MarkAllNotificationsAsRead.Field()
-    mark_notification_as_read = MarkNotificationAsRead.Field()
-    mark_all_notifications_as_read = MarkAllNotificationsAsRead.Field()
-    submit_news_for_review = SubmitNewsForReview.Field()
-    toggle_tag = ToggleTag.Field()
+
+
+class Subscription(graphene.ObjectType):
+    """
+    GraphQL Subscriptions for real-time updates
+    """
+    notification_added = graphene.Field(NotificationType)
+    
+    def resolve_notification_added(root, info):
+        """
+        Subscribe to new notifications for the authenticated user
+        """
+        # This will be handled by our custom consumer
+        # The subscription field is just a placeholder for the schema
+        return None
+
 
 # Schema
-schema = graphene.Schema(query=Query, mutation=Mutation)
+schema = graphene.Schema(query=Query, mutation=Mutation, subscription=Subscription)
