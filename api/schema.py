@@ -1218,6 +1218,43 @@ class UploadAvatarImage(graphene.Mutation):
             return UploadAvatarImage(success=False, errors=[f"Avatar upload failed: {str(e)}"])
 
 
+class UploadRegistrationAvatarImage(graphene.Mutation):
+    """
+    Upload avatar image for registration (no authentication required)
+    """
+    class Arguments:
+        base64Data = graphene.String(required=True, description="Base64 encoded avatar image")
+
+    url = graphene.String()
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, base64Data):
+        """
+        Upload avatar image without authentication for registration
+        """
+        try:
+            # Upload the image with avatar-specific settings
+            upload_mutation = UploadBase64Image()
+            upload_result = upload_mutation.mutate(
+                info, 
+                base64Data=base64Data,
+                folder="newsor/avatars/temp",  # Use temp folder for registration avatars
+                maxWidth=400,
+                maxHeight=400,
+                quality="auto",
+                format="auto"
+            )
+            
+            if not upload_result.success:
+                return UploadRegistrationAvatarImage(success=False, errors=upload_result.errors)
+            
+            return UploadRegistrationAvatarImage(url=upload_result.url, success=True, errors=[])
+            
+        except Exception as e:
+            return UploadRegistrationAvatarImage(success=False, errors=[f"Avatar upload failed: {str(e)}"])
+
+
 class UpdateNewsStatus(graphene.Mutation):
     """
     Update news article status (for managers)
@@ -1593,6 +1630,7 @@ class Mutation(graphene.ObjectType):
     get_cloudinary_signature = GetCloudinarySignature.Field()
     upload_base64_image = UploadBase64Image.Field()
     upload_avatar_image = UploadAvatarImage.Field()
+    upload_registration_avatar_image = UploadRegistrationAvatarImage.Field()
     update_news_status = UpdateNewsStatus.Field()
     submit_news_for_review = SubmitNewsForReview.Field()
     update_news = UpdateNews.Field()

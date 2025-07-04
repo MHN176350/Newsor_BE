@@ -9,3 +9,8 @@ django-cloudinary-storage==0.3.0
 djangorestframework==3.15.2
 requests==2.32.3
 Pillow==10.4.0
+unidecode==1.4.0
+channels==4.0.0
+channels-redis==4.1.0
+uvicorn[standard]==0.32.1
+daphne==4.0.0
