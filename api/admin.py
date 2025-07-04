@@ -15,7 +15,7 @@ class CategoryAdmin(admin.ModelAdmin):
 
 @admin.register(Tag)
 class TagAdmin(admin.ModelAdmin):
-    list_display = ['name', 'slug', 'created_at']
+    list_display = ['name', 'slug', 'created_at', 'is_active']
     search_fields = ['name']
     prepopulated_fields = {'slug': ('name',)}
 
@@ -72,7 +72,7 @@ class LikeAdmin(admin.ModelAdmin):
 
 @admin.register(ReadingHistory)
 class ReadingHistoryAdmin(admin.ModelAdmin):
-    list_display = ['user', 'article', 'read_at', 'read_duration']
+    list_display = ['user', 'article', 'read_at']
     list_filter = ['read_at']
     search_fields = ['user__username', 'article__title']
 
