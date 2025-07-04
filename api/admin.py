@@ -59,8 +59,8 @@ class NewsAdmin(admin.ModelAdmin):
 
 @admin.register(Comment)
 class CommentAdmin(admin.ModelAdmin):
-    list_display = ['article', 'author', 'status', 'created_at']
-    list_filter = ['status', 'created_at']
+    list_display = ['article', 'author', 'created_at']
+    list_filter = ['created_at']
     search_fields = ['content', 'author__username', 'article__title']
 
 

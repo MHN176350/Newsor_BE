@@ -25,7 +25,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('graphql/', csrf_exempt(GraphQLView.as_view(graphiql=True))),
     path('api/', include('api.urls')),
-    path('api-auth/', include('rest_framework.urls')),  # DRF authentication URLs
+    path('api-auth/', include('rest_framework.urls')),  
 ]
 
 # Serve static files during development
