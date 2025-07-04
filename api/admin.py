@@ -15,7 +15,7 @@ class CategoryAdmin(admin.ModelAdmin):
 
 @admin.register(Tag)
 class TagAdmin(admin.ModelAdmin):
-    list_display = ['name', 'slug', 'created_at']
+    list_display = ['name', 'slug', 'created_at', 'is_active']
     search_fields = ['name']
     prepopulated_fields = {'slug': ('name',)}
 

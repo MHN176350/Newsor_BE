@@ -3,6 +3,8 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from cloudinary.models import CloudinaryField
 from django.urls import reverse
+from .cloudinary_utils import CloudinaryUtils
+from unidecode import unidecode
 from django.utils.text import slugify
 
 
@@ -24,7 +26,7 @@ class Category(models.Model):
     def __str__(self):
         return self.name
     def save(self, *args, **kwargs):
-        self.slug = slugify(self.name)
+        self.slug = slugify(unidecode(self.name))
         super().save(*args, **kwargs)
 
 
@@ -36,15 +38,15 @@ class Tag(models.Model):
     slug = models.SlugField(max_length=50, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     is_active = models.BooleanField(default=True)
-
     class Meta:
         ordering = ['name']
 
     def __str__(self):
         return self.name
     def save(self, *args, **kwargs):
-        self.slug = slugify(self.name)
+        self.slug = slugify(unidecode(self.name))
         super().save(*args, **kwargs)
+
 
 
 class UserProfile(models.Model):
@@ -201,8 +203,6 @@ class Like(models.Model):
     comment = models.ForeignKey(Comment, on_delete=models.CASCADE, null=True, blank=True, related_name='likes')
     created_at = models.DateTimeField(auto_now_add=True)
     is_active = models.BooleanField(default=True)
-
-
     class Meta:
         constraints = [
             models.UniqueConstraint(
