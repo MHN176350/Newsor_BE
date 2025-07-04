@@ -165,62 +165,6 @@ class News(models.Model):
     def is_published(self):
         return self.status == 'published' and self.published_at and self.published_at <= timezone.now()
 
-    def save(self, *args, **kwargs):
-        """Override save to optimize Cloudinary URLs"""
-        if self.featured_image:
-            # Convert CloudinaryField to string URL if needed
-            image_url = self.featured_image.url if hasattr(self.featured_image, 'url') else str(self.featured_image)
-            # Optimize the URL for storage
-            optimized_url = CloudinaryUtils.optimize_for_storage(image_url)
-            # Only store the resource path, not the full URL
-            if optimized_url != image_url and len(optimized_url) < 255:
-                self.featured_image = optimized_url
-        super().save(*args, **kwargs)
-
-    @property
-    def featured_image_url(self):
-        """Get the full featured image URL for display"""
-        if self.featured_image:
-            return CloudinaryUtils.restore_for_display(str(self.featured_image))
-        return None
-
-
-class ArticleImage(models.Model):
-    """
-    Images embedded in article content
-    """
-    article = models.ForeignKey(News, on_delete=models.CASCADE, related_name='embedded_images')
-    image = CloudinaryField('article_content_image')
-    alt_text = models.CharField(max_length=255, blank=True)
-    caption = models.CharField(max_length=500, blank=True)
-    order = models.PositiveIntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
-    
-    class Meta:
-        ordering = ['order', 'created_at']
-    
-    def __str__(self):
-        return f"Image for {self.article.title}"
-
-    def save(self, *args, **kwargs):
-        """Override save to optimize Cloudinary URLs"""
-        if self.image:
-            # Convert CloudinaryField to string URL if needed
-            image_url = self.image.url if hasattr(self.image, 'url') else str(self.image)
-            # Optimize the URL for storage
-            optimized_url = CloudinaryUtils.optimize_for_storage(image_url)
-            # Only store the resource path, not the full URL
-            if optimized_url != image_url and len(optimized_url) < 255:
-                self.image = optimized_url
-        super().save(*args, **kwargs)
-
-    @property
-    def image_url(self):
-        """Get the full image URL for display"""
-        if self.image:
-            return CloudinaryUtils.restore_for_display(str(self.image))
-        return None
-
 
 class Comment(models.Model):
     """
