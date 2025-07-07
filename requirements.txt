@@ -14,3 +14,4 @@ channels==4.0.0
 channels-redis==4.1.0
 uvicorn[standard]==0.32.1
 daphne==4.0.0
+bleach=6.0.0

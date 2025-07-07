@@ -204,3 +204,15 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Docker
+.env
+.env.local
+.env.production
+.env.staging
+
+# Docker volumes and data
+postgres_data/
+redis_data/
+postgres_dev_data/
+redis_dev_data/
