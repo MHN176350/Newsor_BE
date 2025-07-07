@@ -4,6 +4,8 @@ from django.utils import timezone
 from cloudinary.models import CloudinaryField
 from django.urls import reverse
 from .cloudinary_utils import CloudinaryUtils
+from unidecode import unidecode
+from django.utils.text import slugify
 
 
 class Category(models.Model):
@@ -23,6 +25,9 @@ class Category(models.Model):
 
     def __str__(self):
         return self.name
+    def save(self, *args, **kwargs):
+        self.slug = slugify(unidecode(self.name))
+        super().save(*args, **kwargs)
 
 
 class Tag(models.Model):
@@ -39,6 +44,10 @@ class Tag(models.Model):
 
     def __str__(self):
         return self.name
+    def save(self, *args, **kwargs):
+        self.slug = slugify(unidecode(self.name))
+        super().save(*args, **kwargs)
+
 
 
 class UserProfile(models.Model):
@@ -163,7 +172,7 @@ class News(models.Model):
         return reverse('news_detail', kwargs={'slug': self.slug})
 
     def is_published(self):
-        return self.status == 'published' and self.published_at and self.published_at <= timezone.now()
+        return self.status == 'published' and self.published_at and self.published_at <= timezone.now() 
 
 
 class Comment(models.Model):
@@ -200,7 +209,7 @@ class Like(models.Model):
     article = models.ForeignKey(News, on_delete=models.CASCADE, null=True, blank=True, related_name='likes')
     comment = models.ForeignKey(Comment, on_delete=models.CASCADE, null=True, blank=True, related_name='likes')
     created_at = models.DateTimeField(auto_now_add=True)
-
+    is_active = models.BooleanField(default=True)
     class Meta:
         constraints = [
             models.UniqueConstraint(
