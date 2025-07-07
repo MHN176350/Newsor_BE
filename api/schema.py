@@ -879,7 +879,7 @@ class Query(graphene.ObjectType):
     #     return Like.objects.filter(user=user, article_id=article_id).exists()
     
     is_comment_liked = graphene.Boolean(comment_id=graphene.ID(required=True))
-    def resolve_is_comment_liked(self, info, comment_id):
+    def resolve_is_comment_liked(self, info, comment_id, limit=10):
         """Check user liked comment"""
         user = info.context.user
         if not user.is_authenticated:

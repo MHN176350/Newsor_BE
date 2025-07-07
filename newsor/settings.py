@@ -18,7 +18,7 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-uk@bs94pc^bt*$os-w=a0
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='', cast=lambda v: [s.strip() for s in v.split(',')] if v else [])
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,0.0.0.0,backend', cast=lambda v: [s.strip() for s in v.split(',')] if v else ['localhost', '127.0.0.1', '0.0.0.0', 'backend'])
 
 
 # Application definition
@@ -83,7 +83,7 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [("127.0.0.1", 6379)],
+            "hosts": [config('REDIS_URL', default='redis://127.0.0.1:6379/0')],
         },
     },
 }
@@ -95,12 +95,12 @@ CHANNEL_LAYERS = {
 # PostgreSQL configuration for development
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='newsor'),
-        'USER': config('DB_USER', default='postgres'),
-        'PASSWORD': config('DB_PASSWORD', default='password'),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='5432'),
+        'ENGINE': config('DATABASE_ENGINE', default='django.db.backends.postgresql'),
+        'NAME': config('DATABASE_NAME', default='newsor'),
+        'USER': config('DATABASE_USER', default='postgres'),
+        'PASSWORD': config('DATABASE_PASSWORD', default='010423'),
+        'HOST': config('DATABASE_HOST', default='localhost'),
+        'PORT': config('DATABASE_PORT', default='5432'),
     }
 }
 
