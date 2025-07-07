@@ -1,3 +1,4 @@
+
 import graphene
 from graphene_django import DjangoObjectType
 from django.contrib.auth.models import User
@@ -12,6 +13,7 @@ from PIL import Image
 import cloudinary.uploader
 import uuid
 from .cloudinary_utils import CloudinaryUtils
+from django.db.models import Count, Q
 
 
 class UserType(DjangoObjectType):
@@ -162,9 +164,31 @@ class CommentType(DjangoObjectType):
     """
     GraphQL Comment type
     """
+    replies = graphene.List(lambda: CommentType)
+    comment_like_count = graphene.Int()
+    is_comment_liked = graphene.Boolean()
+
     class Meta:
         model = Comment
         fields = '__all__'
+
+    def resolve_replies(self, info):
+        return self.replies.all().order_by('created_at')
+
+    def resolve_comment_like_count(self, info):
+        """
+        Count the number of active likes for this comment
+        """
+        return Like.objects.filter(comment_id=self.id, is_active=True).count()
+    
+    def resolve_is_comment_liked(self, info):
+        """
+        Check if current user liked this comment
+        """
+        user = info.context.user
+        if user.is_anonymous:
+            return False
+        return Like.objects.filter(user=user, comment_id=self.id, is_active=True).exists()
 
 
 class ArticleImageType(DjangoObjectType):
@@ -184,6 +208,26 @@ class ArticleImageType(DjangoObjectType):
         image_url = self.image_url  # Use the new property method
         return image_url or ""
         return ""
+
+    def resolve_replies(self, info):
+        return self.replies.all().order_by('created_at')
+
+    def resolve_comment_like_count(self, info):
+        """
+        Count the number of active likes for this comment
+        """
+        return Like.objects.filter(comment_id=self.id, is_active=True).count()
+    
+    def resolve_is_comment_liked(self, info):
+        """
+        Check if current user liked this comment
+        """
+        user = info.context.user
+        if user.is_anonymous:
+            return False
+        return Like.objects.filter(user=user, comment_id=self.id, is_active=True).exists()
+
+
 
 
 class LikeType(DjangoObjectType):
@@ -267,7 +311,7 @@ class Query(graphene.ObjectType):
     """
     API GraphQL Queries
     """
-    # Basic queries
+# Basic queries
     hello = graphene.String(name=graphene.String(default_value='World'))
     
     # User queries
@@ -275,7 +319,42 @@ class Query(graphene.ObjectType):
     users = graphene.List(UserType)
     user = graphene.Field(UserType, id=graphene.Int(required=True))
     user_profile = graphene.Field(UserProfileType, user_id=graphene.Int(required=True))
-    
+    user_comment_history = graphene.List(
+        CommentType,
+        user_id=graphene.Int(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0),
+        from_date=graphene.Date(required=False),
+        to_date=graphene.Date(required=False)
+    )
+    def resolve_user_comment_history(self, info, user_id, limit, offset, from_date=None, to_date=None):
+        qs = Comment.objects.filter(author_id=user_id)
+
+        if from_date:
+            qs = qs.filter(created_at__date__gte=from_date)
+        if to_date:
+            qs = qs.filter(created_at__date__lte=to_date)
+
+        return qs.order_by('-created_at')[offset:offset + limit]
+        
+    user_reading_history = graphene.List(
+        ReadingHistoryType,
+        user_id=graphene.Int(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0),
+        from_date=graphene.Date(required=False),
+        to_date=graphene.Date(required=False)
+    )
+    def resolve_user_reading_history(self, info, user_id, limit, offset, from_date=None, to_date=None):
+        qs = ReadingHistory.objects.filter(user_id=user_id)
+
+        if from_date:
+            qs = qs.filter(read_at__date__gte=from_date)
+        if to_date:
+            qs = qs.filter(read_at__date__lte=to_date)
+
+        return qs.order_by('-read_at')[offset:offset + limit]
+
     # News queries
     news_list = graphene.List(NewsType, 
                              status=graphene.String(),
@@ -290,18 +369,171 @@ class Query(graphene.ObjectType):
                                   tag_id=graphene.Int())
     news_for_review = graphene.List(NewsType)
     my_news = graphene.List(NewsType)
+    ##############################################  add
+    articles_by_category = graphene.List(
+        NewsType,
+        category_id=graphene.ID(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0)
+    )
+    def resolve_articles_by_category(self, info, category_id, limit, offset):
+        """
+        Get articles filtered by category ID
+        """
+        return News.objects.filter(category_id=category_id, status='published').order_by('-published_at')[offset:offset + limit]
+
+    articles_by_tag = graphene.List(
+        NewsType,
+        tag_id=graphene.Int(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0)
+    )
+    def resolve_articles_by_tag(self, info, tag_id, limit, offset):
+        """
+        Get articles filtered by tag ID
+        """
+        return News.objects.filter(tags__id=tag_id, status='published').order_by('-published_at')[offset:offset + limit]
+    
+    article_like_count = graphene.Int(
+        article_id=graphene.Int(required=False)
+    )
+    ####################################################
+    def resolve_article_like_count(self, info, article_id=None):
+        """
+        Get total active like count for a specific article
+        """
+        if article_id is None:
+            return 0
+        return Like.objects.filter(article_id=article_id, is_active=True).count()
+    article_comment_count = graphene.Int(
+        article_id=graphene.Int(required=False)
+    )
+    def resolve_article_comment_count(self, info, article_id=None):
+        """
+        Count number of comments for a specific article
+        """
+        if article_id is None:
+            return 0
+        return Comment.objects.filter(article_id=article_id).count()
+    has_read_article = graphene.Boolean(
+        article_id=graphene.Int(required=True)
+    )
+    def resolve_has_read_article(self, info, article_id):
+        """
+        Return True if the user has a reading history entry for this article
+        """
+        user = info.context.user
+        if user.is_anonymous:
+            return False  # Guest users don't have reading history
+        return ReadingHistory.objects.filter(user=user, article_id=article_id).exists()
     
     # Category and Tag queries
     categories = graphene.List(CategoryType)
     category = graphene.Field(CategoryType, id=graphene.Int())
+    #Search category by key word
+    search_categories = graphene.List(CategoryType, keyword=graphene.String(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0),)
+    def resolve_search_categories(self, info, keyword,limit, offset):
+        """ Filter category name containing the keyword (case-insensitive) """
+        return Category.objects.filter(name__icontains=keyword)[offset:offset + limit] 
     tags = graphene.List(TagType)
     admin_tags = graphene.List(TagType)  # Admin-only query to get all tags including inactive
-    
+    ######################################### add
+    #Search tag by key word
+    search_tags = graphene.List(
+        TagType,
+        keyword=graphene.String(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0),
+    )
+    def resolve_search_tags(self, info, keyword, limit, offset):
+        """ Filter tag name containing the keyword (case-insensitive) """
+        return Tag.objects.filter(name__icontains=keyword)[offset:offset + limit]
+    ############################################
     # Comment queries
-    article_comments = graphene.List(CommentType, article_id=graphene.Int(required=True))
+    article_comments = graphene.List(CommentType, article_id=graphene.Int(required=False))
+    article_comments_with_replies = graphene.List(CommentType, article_id=graphene.Int(required=False))
+    def resolve_article_comments_with_replies(self, info, article_id):
+        """
+        Get all comments for an article with nested replies (all levels)
+        """
+        try:
+            # Get all comments for the article
+            all_comments = Comment.objects.filter(article_id=article_id).select_related('author', 'author__profile', 'parent', 'parent__author', 'parent__author__profile')
+            
+            # Separate parent comments and replies
+            parent_comments = []
+            all_replies = {}
+            
+            for comment in all_comments:
+                if comment.parent is None:
+                    parent_comments.append(comment)
+                else:
+                    parent_id = comment.parent.id
+                    if parent_id not in all_replies:
+                        all_replies[parent_id] = []
+                    all_replies[parent_id].append(comment)
+            
+            # Build nested structure
+            def build_comment_tree(comment):
+                comment_data = comment
+                comment_data.nested_replies = all_replies.get(comment.id, [])
+                
+                # Recursively build replies
+                for reply in comment_data.nested_replies:
+                    build_comment_tree(reply)
+                
+                return comment_data
+            
+            # Build the tree for each parent comment
+            result = []
+            for parent in parent_comments:
+                result.append(build_comment_tree(parent))
+            
+            return result
+        except Exception as e:
+            print(f"Error in resolve_article_comments_with_replies: {e}")
+            return []
+    # Search latest cmt by article id 
+    latest_article_comments = graphene.List(
+        CommentType, article_id=graphene.Int(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0)
+    )
+    def resolve_latest_article_comments(self, info, article_id,limit, offset):
+        """Get comments for an article"""
+        return Comment.objects.filter(article_id=article_id, parent__isnull=True).order_by('-created_at')[offset:offset + limit]
     
-    # Analytics queries
-    user_reading_history = graphene.List(ReadingHistoryType, user_id=graphene.Int(required=True))
+    # Search top cmt by article id
+    top_liked_comments = graphene.List(
+        CommentType,
+        article_id=graphene.Int(required=True),
+        limit=graphene.Int(default_value=10),
+        offset=graphene.Int(default_value=0)
+    )
+    def resolve_top_liked_comments(self, info, article_id, limit, offset):
+        """
+        Get top liked comments for an article (ordered by like_count descending)
+        """
+        return Comment.objects.filter(
+        article_id=article_id,
+        parent__isnull=True
+        ).annotate(
+            real_like_count=Count('likes', filter=Q(likes__is_active=True))
+        ).order_by('-real_like_count', '-created_at')[offset:offset + limit]
+
+    comment_like_count = graphene.Int(
+        comment_id=graphene.Int(required=True)
+    )
+
+    def resolve_comment_like_count(self, info, comment_id):
+        """
+        Count the number of active likes for a specific comment
+        """
+        return Like.objects.filter(comment_id=comment_id, is_active=True).count()
+    # # Analytics queries
+    # user_reading_history = graphene.List(ReadingHistoryType, user_id=graphene.Int(required=True))
     
     # Dashboard queries
     dashboard_stats = graphene.Field(DashboardStatsType)
@@ -311,9 +543,32 @@ class Query(graphene.ObjectType):
     notifications = graphene.List(NotificationType)
     unread_notifications = graphene.List(NotificationType)
     notification_count = graphene.Int()
+    
 
+    # Like queries:
+    is_article_liked = graphene.Boolean(article_id=graphene.Int(required=False))
+    def resolve_is_article_liked(self, info, article_id=None):
+        user = info.context.user
+        if user.is_anonymous or article_id is None:
+            return False
+        return Like.objects.filter(user=user, article_id=article_id,is_active=True).exists()
+    
+    is_comment_liked = graphene.Boolean(comment_id=graphene.Int(required=False))
+    def resolve_is_comment_liked(self, info, comment_id=None):
+        user = info.context.user
+        if user.is_anonymous or comment_id is None:
+            return False
+        return Like.objects.filter(user=user, comment_id=comment_id, is_active=True).exists()
+    article_read_count = graphene.Int(
+        article_id=graphene.Int(required=False)
+    )
+    def resolve_article_read_count(self, info, article_id=None):
+        if article_id is None:
+            return 0
+        return ReadingHistory.objects.filter(article_id=article_id).values('user').distinct().count()
+    
     def resolve_hello(self, info, name):
-       
+        """Simple hello world resolver"""
         return f'Hello {name}'
     
     def resolve_me(self, info):
@@ -326,6 +581,8 @@ class Query(graphene.ObjectType):
     def resolve_users(self, info):
         """Get all users"""
         return User.objects.all()
+    
+    user = graphene.Field(UserType, id=graphene.Int(required=True))
 
     def resolve_user(self, info, id):
         """Get user by ID"""
@@ -333,7 +590,8 @@ class Query(graphene.ObjectType):
             return User.objects.get(pk=id)
         except User.DoesNotExist:
             return None
-
+        
+    user_profile = graphene.Field(UserProfileType, user_id=graphene.Int(required=True))
     def resolve_user_profile(self, info, user_id):
         """Get user profile by user ID"""
         try:
@@ -365,6 +623,7 @@ class Query(graphene.ObjectType):
             
         return queryset.distinct().order_by('-created_at')
 
+    news_article = graphene.Field(NewsType, id=graphene.Int(), slug=graphene.String())
     def resolve_news_article(self, info, id=None, slug=None):
         """Get news article by ID or slug"""
         try:
@@ -374,7 +633,6 @@ class Query(graphene.ObjectType):
                 return News.objects.get(slug=slug)
         except News.DoesNotExist:
             return None
-
     def resolve_published_news(self, info, search=None, category_id=None, tag_id=None):
         """Get published news articles with optional filters"""
         from django.db.models import Q
@@ -394,18 +652,27 @@ class Query(graphene.ObjectType):
             )
             
         return queryset.distinct().order_by('-published_at')
-
+    
     def resolve_categories(self, info):
         """Get all categories"""
         return Category.objects.filter(is_active=True)
-
+    
+    category = graphene.Field(CategoryType, id=graphene.Int())
     def resolve_category(self, info, id):
         """Get category by ID"""
         try:
             return Category.objects.get(pk=id)
         except Category.DoesNotExist:
             return None
+        
+    #Search category by key word
+    search_categories = graphene.List(CategoryType, keyword=graphene.String(required=True))
+    def resolve_search_categories(self, info, keyword):
+        """ Filter category name containing the keyword (case-insensitive) """
+        return Category.objects.filter(name__icontains=keyword)[:10]  # Limit to 10 results
 
+# Tag queries
+    tags = graphene.List(TagType)
     def resolve_tags(self, info):
         """Get all active tags for public use"""
         # For admin users, show all tags. For others, show only active tags
@@ -462,14 +729,16 @@ class Query(graphene.ObjectType):
         # Return all articles by the current user
         return News.objects.filter(author=user).order_by('-created_at')
 
-    def resolve_article_comments(self, info, article_id):
+    def resolve_article_comments(self, info, article_id=None):
         """Get comments for an article"""
-        return Comment.objects.filter(article_id=article_id, status='approved')
+        if article_id is None:
+            return []
+        return Comment.objects.filter(article_id=article_id)
 
-    def resolve_user_reading_history(self, info, user_id):
-        """Get user's reading history"""
-        return ReadingHistory.objects.filter(user_id=user_id)
-    
+    # def resolve_user_reading_history(self, info, user_id):
+    #     """Get user's reading history"""
+    #     return ReadingHistory.objects.filter(user_id=user_id)
+         
     def resolve_dashboard_stats(self, info):
         """Get dashboard statistics"""
         from datetime import datetime
@@ -598,6 +867,46 @@ class Query(graphene.ObjectType):
             recipient=user,
             is_read=False
         ).count()
+
+    # ...existing code...
+    # Like queries:
+    # is_article_liked = graphene.Boolean(article_id=graphene.ID(required=True))  ########### add
+    # def resolve_is_article_liked(self, info, article_id):
+    #     """Check user liked article"""
+    #     user = info.context.user
+    #     if user.is_anonymous:
+    #         return False
+    #     return Like.objects.filter(user=user, article_id=article_id).exists()
+    
+    is_comment_liked = graphene.Boolean(comment_id=graphene.ID(required=True))
+    def resolve_is_comment_liked(self, info, comment_id):
+        """Check user liked comment"""
+        user = info.context.user
+        if not user.is_authenticated:
+            return []
+            
+        try:
+            profile = UserProfile.objects.get(user=user)
+            if profile.role.lower() not in ['admin', 'manager']:
+                return []
+        except UserProfile.DoesNotExist:
+            return []
+        
+        # Get recent news as activity
+        recent_news = News.objects.select_related('author').order_by('-created_at')[:limit]
+        
+        activities = []
+        for news in recent_news:
+            activities.append(RecentActivityType(
+                id=news.id,
+                action='news_created',
+                description=f'New article "{news.title}" was created',
+                timestamp=news.created_at,
+                user=news.author
+            ))
+        
+        return activities
+
 
     # ...existing code...
     
@@ -854,7 +1163,75 @@ class CreateCategory(graphene.Mutation):
             return CreateCategory(category = category, success=True, errors="Category created successfully.")
         except Exception as e:
             return CreateCategory(success=False, errors="Unexpected error: " + str(e), category=None)
+
+class UpdateCategory(graphene.Mutation):
+    """
+    Update an existing category's name, or description
+    """
+
+    class Arguments:
+        id = graphene.Int(required=True)
+        name = graphene.String(required=False)
+        description = graphene.String(required=False)
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+    category = graphene.Field(CategoryType)
+
+    def mutate(self, info, id, name=None, description=None):
+        try:
+            category = Category.objects.get(id=id)
+
+            # Check for unique name and slug if being updated
+            if name and name != category.name:
+                if Category.objects.filter(name=name).exclude(id=id).exists():
+                    return UpdateCategory(success=False, errors="Name already exists.", category=None)
+                category.name = name
+
+            if description is not None:
+                category.description = description
+
+            category.save()
+            return UpdateCategory(success=True, errors="Category updated successfully.", category=category)
+
+        except Category.DoesNotExist:
+            return UpdateCategory(success=False, errors="Category not found.", category=None)
+        except Exception as e:
+            return UpdateCategory(success=False, errors="Unexpected error: " + str(e), category=None)
         
+class DeleteCategory(graphene.Mutation):
+    """
+    Soft delete a category by setting is_active=False
+    """
+
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+    category = graphene.Field(CategoryType)
+
+    def mutate(self, info, id):
+        try:
+            # Try to find the category
+            category = Category.objects.get(id=id)
+
+            # Check if already inactive
+            if not category.is_active:
+                return DeleteCategory(success=False, errors="Category is already inactive.", category=None)
+
+            # Soft delete by setting is_active to False
+            category.is_active = False
+            category.save()
+
+            return DeleteCategory(success=True, errors="Category deactivated successfully.", category=category)
+
+        except Category.DoesNotExist:
+            return DeleteCategory(success=False, errors="Category not found.", category=None)
+
+        except Exception as e:
+            return DeleteCategory(success=False, errors="Unexpected error: " + str(e), category=None)
+                
 class CreateTag(graphene.Mutation):
     """
     Create a new tag
@@ -884,7 +1261,71 @@ class CreateTag(graphene.Mutation):
             return CreateTag(tag = tag, success=True, errors="Tag created successfully.")
         except Exception as e:
             return CreateTag(success=False, errors="Unexpected error: " + str(e), tag=None)
+
+class UpdateTag(graphene.Mutation):
+    """
+    Update an existing tag's name
+    """
+
+    class Arguments:
+        id = graphene.Int(required=True)
+        name = graphene.String(required=False)
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+    tag = graphene.Field(TagType)
+
+    def mutate(self, info, id, name=None):
+        try:
+            tag = Tag.objects.get(id=id)
+
+            # Check for unique name and slug if being updated
+            if name and name != tag.name:
+                if Category.objects.filter(name=name).exclude(id=id).exists():
+                    return UpdateTag(success=False, errors="Name already exists.", tag=None)
+                tag.name = name
+
+            tag.save()
+            return UpdateTag(success=True, errors="Tag updated successfully.", tag=tag)
+
+        except Tag.DoesNotExist:
+            return UpdateTag(success=False, errors="Tag not found.", tag=None)
+        except Tag as e:
+            return UpdateTag(success=False, errors="Unexpected error: " + str(e), tag=None)
         
+class DeleteTag(graphene.Mutation):
+    """
+    Soft delete a tag by setting is_active=False
+    """
+
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+    tag = graphene.Field(TagType)
+
+    def mutate(self, info, id):
+        try:
+            # Try to find the tag
+            tag = Tag.objects.get(id=id)
+
+            # Check if already inactive
+            if not tag.is_active:
+                return DeleteTag(success=False, errors="Tag is already inactive.", tag=None)
+
+            # Soft delete by setting is_active to False
+            tag.is_active = False
+            tag.save()
+
+            return DeleteTag(success=True, errors="Tag deactivated successfully.", tag=tag)
+
+        except Tag.DoesNotExist:
+            return DeleteTag(success=False, errors="Tag not found.", tag=None)
+
+        except Exception as e:
+            return DeleteTag(success=False, errors="Unexpected error: " + str(e), tag=None)
+
 class ToggleTag(graphene.Mutation):
     """
     Toggle tag active status (admin only)
@@ -939,9 +1380,9 @@ class CreateComment(graphene.Mutation):
     """
 
     class Arguments:
-        articleId = graphene.ID(required=True)
+        articleId = graphene.Int(required=True)
         content = graphene.String(required=True)
-        parentId = graphene.ID(required=False)
+        parentId = graphene.Int(required=False)
 
     comment = graphene.Field(CommentType)
     success = graphene.Boolean()
@@ -1423,99 +1864,99 @@ class UpdateNews(graphene.Mutation):
             return UpdateNews(success=False, errors=[str(e)])
 
 
-class ToggleLike(graphene.Mutation):
-    """
-    Toggle like/unlike for articles or comments
-    """
-    class Arguments:
-        newsId = graphene.Int()
-        commentId = graphene.Int()
+# class ToggleLike(graphene.Mutation):
+#     """
+#     Toggle like/unlike for articles or comments
+#     """
+#     class Arguments:
+#         newsId = graphene.Int()
+#         commentId = graphene.Int()
 
-    success = graphene.Boolean()
-    liked = graphene.Boolean()
-    likes_count = graphene.Int()
-    errors = graphene.List(graphene.String)
+#     success = graphene.Boolean()
+#     liked = graphene.Boolean()
+#     likes_count = graphene.Int()
+#     errors = graphene.List(graphene.String)
 
-    def mutate(self, info, newsId=None, commentId=None):
-        """
-        Toggle like mutation
-        """
-        user = info.context.user
-        if not user.is_authenticated:
-            return ToggleLike(success=False, errors=['Authentication required'])
+#     def mutate(self, info, newsId=None, commentId=None):
+#         """
+#         Toggle like mutation
+#         """
+#         user = info.context.user
+#         if not user.is_authenticated:
+#             return ToggleLike(success=False, errors=['Authentication required'])
 
-        try:
-            # Validate input - must provide either newsId or commentId
-            if not newsId and not commentId:
-                return ToggleLike(success=False, errors=['Must provide either newsId or commentId'])
+#         try:
+#             # Validate input - must provide either newsId or commentId
+#             if not newsId and not commentId:
+#                 return ToggleLike(success=False, errors=['Must provide either newsId or commentId'])
             
-            if newsId and commentId:
-                return ToggleLike(success=False, errors=['Cannot like both news and comment in same request'])
+#             if newsId and commentId:
+#                 return ToggleLike(success=False, errors=['Cannot like both news and comment in same request'])
 
-            if newsId:
-                # Handle news like
-                try:
-                    news = News.objects.get(id=newsId)
-                except News.DoesNotExist:
-                    return ToggleLike(success=False, errors=['News article not found'])
+#             if newsId:
+#                 # Handle news like
+#                 try:
+#                     news = News.objects.get(id=newsId)
+#                 except News.DoesNotExist:
+#                     return ToggleLike(success=False, errors=['News article not found'])
 
-                like, created = Like.objects.get_or_create(
-                    user=user,
-                    article=news,
-                    defaults={'comment': None}
-                )
+#                 like, created = Like.objects.get_or_create(
+#                     user=user,
+#                     article=news,
+#                     defaults={'comment': None}
+#                 )
 
-                if not created:
-                    # Unlike - remove the like
-                    like.delete()
-                    liked = False
-                else:
-                    # Like created
-                    liked = True
+#                 if not created:
+#                     # Unlike - remove the like
+#                     like.delete()
+#                     liked = False
+#                 else:
+#                     # Like created
+#                     liked = True
 
-                # Get updated like count
-                likes_count = news.likes.count()
+#                 # Get updated like count
+#                 likes_count = news.likes.count()
                 
-                return ToggleLike(
-                    success=True,
-                    liked=liked,
-                    likes_count=likes_count,
-                    errors=[]
-                )
+#                 return ToggleLike(
+#                     success=True,
+#                     liked=liked,
+#                     likes_count=likes_count,
+#                     errors=[]
+#                 )
 
-            elif commentId:
-                # Handle comment like
-                try:
-                    comment = Comment.objects.get(id=commentId)
-                except Comment.DoesNotExist:
-                    return ToggleLike(success=False, errors=['Comment not found'])
+#             elif commentId:
+#                 # Handle comment like
+#                 try:
+#                     comment = Comment.objects.get(id=commentId)
+#                 except Comment.DoesNotExist:
+#                     return ToggleLike(success=False, errors=['Comment not found'])
 
-                like, created = Like.objects.get_or_create(
-                    user=user,
-                    comment=comment,
-                    defaults={'article': None}
-                )
+#                 like, created = Like.objects.get_or_create(
+#                     user=user,
+#                     comment=comment,
+#                     defaults={'article': None}
+#                 )
 
-                if not created:
-                    # Unlike - remove the like
-                    like.delete()
-                    liked = False
-                else:
-                    # Like created
-                    liked = True
+#                 if not created:
+#                     # Unlike - remove the like
+#                     like.delete()
+#                     liked = False
+#                 else:
+#                     # Like created
+#                     liked = True
 
-                # Get updated like count
-                likes_count = comment.likes.count()
+#                 # Get updated like count
+#                 likes_count = comment.likes.count()
                 
-                return ToggleLike(
-                    success=True,
-                    liked=liked,
-                    likes_count=likes_count,
-                    errors=[]
-                )
+#                 return ToggleLike(
+#                     success=True,
+#                     liked=liked,
+#                     likes_count=likes_count,
+#                     errors=[]
+#                 )
 
-        except Exception as e:
-            return ToggleLike(success=False, errors=[str(e)])
+#         except Exception as e:
+#             return ToggleLike(success=False, errors=[str(e)])
 
 # ...existing mutations...
 
@@ -1614,6 +2055,361 @@ class SubmitNewsForReview(graphene.Mutation):
             return SubmitNewsForReview(success=False, errors=[str(e)])
 
 
+class CreateLikeArticle(graphene.Mutation):
+    """
+    Like a news article by the authenticated user
+    """
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+
+    class Arguments:
+        article_id = graphene.ID(required=True)
+
+    def mutate(self, info, article_id):
+        try:
+            user = info.context.user
+
+            # Check user authentication
+            if user.is_anonymous:
+                return CreateLikeArticle(success=False, errors="Authentication required.")
+
+            # Check if the article exists
+            try:
+                article = News.objects.get(pk=article_id)
+            except News.DoesNotExist:
+                return CreateLikeArticle(success=False, errors="Article not found.")
+
+            # Check if already liked
+            if Like.objects.filter(user=user, article=article).exists():
+                return CreateLikeArticle(success=False, errors="You already liked this article.")
+
+            # Create like
+            Like.objects.create(user=user, article=article)
+
+            return CreateLikeArticle(success=True, errors="Article liked successfully.")
+
+        except Exception as e:
+            return CreateLikeArticle(success=False, errors="Unexpected error: " + str(e))
+
+class CreateLikeComment(graphene.Mutation):
+    """
+    Like a comment by the authenticated user
+    """
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+
+    class Arguments:
+        comment_id = graphene.ID(required=True)
+
+    def mutate(self, info, comment_id):
+        try:
+            user = info.context.user
+
+            # Check user authentication
+            if user.is_anonymous:
+                return CreateLikeComment(success=False, errors="Authentication required.")
+
+            # Check if comment exists
+            try:
+                comment = Comment.objects.get(pk=comment_id)
+            except Comment.DoesNotExist:
+                return CreateLikeComment(success=False, errors="Comment not found.")
+
+            # Check if already liked
+            if Like.objects.filter(user=user, comment=comment).exists():
+                return CreateLikeComment(success=False, errors="You already liked this comment.")
+
+            # Create like
+            Like.objects.create(user=user, comment=comment)
+
+            return CreateLikeComment(success=True, errors="Comment liked successfully.")
+
+        except Exception as e:
+            return CreateLikeComment(success=False, errors="Unexpected error: " + str(e))
+
+# class UpdateLikeStatus(graphene.Mutation):
+#     """
+#     Deactivate (cancel) an existing like by setting is_active=False
+#     """
+
+#     success = graphene.Boolean()
+#     errors = graphene.List(graphene.String)
+
+#     def mutate(self, info, base64_data, folder="newsor/uploads", max_width=800, max_height=600, quality="auto", format="auto"):
+#         """
+#         Process base64 image and upload to Cloudinary
+#         """
+#         try:
+#             # Remove data URL prefix if present
+#             if base64_data.startswith('data:image'):
+#                 base64_data = base64_data.split(',')[1]
+            
+#             # Decode base64 data
+#             try:
+#                 image_data = base64.b64decode(base64_data)
+#             except Exception as e:
+#                 return UploadBase64Image(success=False, errors=[f"Invalid base64 data: {str(e)}"])
+            
+#             # Open image with PIL
+#             try:
+#                 image = Image.open(io.BytesIO(image_data))
+#             except Exception as e:
+#                 return UploadBase64Image(success=False, errors=[f"Invalid image data: {str(e)}"])
+            
+#             # Convert RGBA to RGB if necessary
+#             if image.mode == 'RGBA':
+#                 background = Image.new('RGB', image.size, (255, 255, 255))
+#                 background.paste(image, mask=image.split()[-1])
+#                 image = background
+            
+#             # Resize image if needed
+#             if image.width > max_width or image.height > max_height:
+#                 image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+            
+#             # Convert back to bytes
+#             output = io.BytesIO()
+#             image.save(output, format='JPEG', quality=85, optimize=True)
+#             output.seek(0)
+            
+#             # Generate unique filename
+#             unique_filename = f"upload_{uuid.uuid4().hex}"
+            
+#             # Upload to Cloudinary
+#             upload_result = cloudinary.uploader.upload(
+#                 output.getvalue(),
+#                 public_id=unique_filename,
+#                 folder=folder,
+#                 transformation=[
+#                     {'quality': quality},
+#                     {'fetch_format': format}
+#                 ],
+#                 resource_type="image"
+#             )
+            
+#             # Optimize URL for storage
+#             optimized_url = CloudinaryUtils.optimize_for_storage(upload_result['secure_url'])
+            
+#             return UploadBase64Image(
+#                 url=optimized_url,
+#                 public_id=upload_result['public_id'],
+#                 success=True,
+#                 errors=[]
+#             )
+            
+#         except Exception as e:
+#             return UploadBase64Image(success=False, errors=[f"Upload failed: {str(e)}"])
+
+
+class UploadAvatarImage(graphene.Mutation):
+    """
+    Upload and set avatar image for user profile
+    """
+    class Arguments:
+        base64Data = graphene.String(required=True, description="Base64 encoded avatar image")
+
+    profile = graphene.Field(UserProfileType)
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, base64Data):
+        """
+        Upload avatar and update user profile
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return UploadAvatarImage(success=False, errors=['Authentication required'])
+
+        try:
+            # Upload the image with avatar-specific settings
+            upload_mutation = UploadBase64Image()
+            upload_result = upload_mutation.mutate(
+                info, 
+                base64Data=base64Data,
+                folder="newsor/avatars",
+                maxWidth=400,
+                maxHeight=400,
+                quality="auto",
+                format="auto"
+            )
+            
+            if not upload_result.success:
+                return UploadAvatarImage(success=False, errors=upload_result.errors)
+            
+            # Update user profile with new avatar
+            profile, created = UserProfile.objects.get_or_create(user=user)
+            profile.avatar = upload_result.url
+            profile.save()
+            
+            return UploadAvatarImage(profile=profile, success=True, errors=[])
+            
+        except Exception as e:
+            return UploadAvatarImage(success=False, errors=[f"Avatar upload failed: {str(e)}"])
+
+class CreateLikeArticle(graphene.Mutation):
+    """
+    Like a news article by the authenticated user
+    """
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+
+    class Arguments:
+        article_id = graphene.Int(required=True)
+
+    def mutate(self, info, article_id):
+        try:
+            user = info.context.user
+
+            # Check user authentication
+            if user.is_anonymous:
+                return CreateLikeArticle(success=False, errors="Authentication required.")
+
+            # Check if the article exists
+            try:
+                article = News.objects.get(pk=article_id)
+            except News.DoesNotExist:
+                return CreateLikeArticle(success=False, errors="Article not found.")
+
+            # Check if already liked
+            if Like.objects.filter(user=user, article=article).exists():
+                return CreateLikeArticle(success=False, errors="You already liked this article.")
+
+            # Create like
+            Like.objects.create(user=user, article=article)
+
+            return CreateLikeArticle(success=True, errors="Article liked successfully.")
+
+        except Exception as e:
+            return CreateLikeArticle(success=False, errors="Unexpected error: " + str(e))
+
+class CreateLikeComment(graphene.Mutation):
+    """
+    Like a comment by the authenticated user
+    """
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+
+    class Arguments:
+        comment_id = graphene.Int(required=True)
+
+    def mutate(self, info, comment_id):
+        try:
+            user = info.context.user
+
+            # Check user authentication
+            if user.is_anonymous:
+                return CreateLikeComment(success=False, errors="Authentication required.")
+
+            # Check if comment exists
+            try:
+                comment = Comment.objects.get(pk=comment_id)
+            except Comment.DoesNotExist:
+                return CreateLikeComment(success=False, errors="Comment not found.")
+
+            # Check if already liked
+            if Like.objects.filter(user=user, comment=comment).exists():
+                return CreateLikeComment(success=False, errors="You already liked this comment.")
+
+            # Create like
+            Like.objects.create(user=user, comment=comment)
+
+            return CreateLikeComment(success=True, errors="Comment liked successfully.")
+
+        except Exception as e:
+            return CreateLikeComment(success=False, errors="Unexpected error: " + str(e))
+
+class UpdateLikeStatus(graphene.Mutation):
+    """
+    Toggle the like status for an article or comment.
+    If like does not exist, it will be created and set to active.
+    If it exists and is_active=True, it will be deactivated.
+    If it exists and is_active=False, it will be reactivated.
+    """
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+    is_active = graphene.Boolean()  # Current state after toggle
+
+    class Arguments:
+        article_id = graphene.Int(required=False)
+        comment_id = graphene.Int(required=False)
+
+    def mutate(self, info, article_id=None, comment_id=None):
+        user = info.context.user
+        if user.is_anonymous:
+            return UpdateLikeStatus(success=False, errors="Authentication required.", is_active=None)
+
+        if not article_id and not comment_id:
+            return UpdateLikeStatus(success=False, errors="You must provide article_id or comment_id.", is_active=None)
+
+        from .models import Like
+
+        try:
+            like_filter = {"user": user}
+            if article_id:
+                like_filter["article_id"] = article_id
+            if comment_id:
+                like_filter["comment_id"] = comment_id
+
+            like, created = Like.objects.get_or_create(**like_filter)
+
+            # Toggle the status
+            if not created:
+                like.is_active = not like.is_active
+            else:
+                like.is_active = True
+
+            like.save()
+
+            return UpdateLikeStatus(success=True, errors=None, is_active=like.is_active)
+
+        except Exception as e:
+            return UpdateLikeStatus(success=False, errors="Unexpected error: " + str(e), is_active=None)
+        
+class CreateReadingHistory(graphene.Mutation):
+    """
+    Record a user's article reading history
+    """
+    class Arguments:
+        article_id = graphene.Int(required=True)
+        ip_address = graphene.String(required=False)
+        user_agent = graphene.String(required=False)
+    success = graphene.Boolean()
+    errors = graphene.String()    
+
+    def mutate(self, info, article_id, ip_address=None, user_agent=None):
+        try:
+            user = info.context.user
+
+            # Ensure user is authenticated
+            if user.is_anonymous:
+                return CreateReadingHistory(success=False, errors="Authentication required.")
+
+            # Check if article exists
+            try:
+                article = News.objects.get(pk=article_id)
+            except News.DoesNotExist:
+                return CreateReadingHistory(success=False, errors="Article not found.")
+
+            # Create reading history record
+            ReadingHistory.objects.create(
+                user=user,
+                article=article,
+                ip_address=ip_address or info.context.META.get("REMOTE_ADDR", ""),
+                user_agent=user_agent or info.context.META.get("HTTP_USER_AGENT", ""),
+            )
+
+            return CreateReadingHistory(success=True, errors="Reading history recorded.")
+
+        except Exception as e:
+            return CreateReadingHistory(success=False, errors="Unexpected error: " + str(e))
+
+
+# ...existing mutations...
+
 class Mutation(graphene.ObjectType):
     """
     API GraphQL Mutations
@@ -1634,9 +2430,17 @@ class Mutation(graphene.ObjectType):
     update_news_status = UpdateNewsStatus.Field()
     submit_news_for_review = SubmitNewsForReview.Field()
     update_news = UpdateNews.Field()
-    toggle_like = ToggleLike.Field()
+    # toggle_like = ToggleLike.Field()
     mark_notification_as_read = MarkNotificationAsRead.Field()
     mark_all_notifications_as_read = MarkAllNotificationsAsRead.Field()
+    create_like_article = CreateLikeArticle.Field()
+    create_like_comment = CreateLikeComment.Field()
+    update_like_status = UpdateLikeStatus.Field()
+    create_readinghistory = CreateReadingHistory.Field()
+    update_category = UpdateCategory.Field()
+    delete_category = DeleteCategory.Field()
+    update_tag = UpdateTag.Field()
+    delete_tag = DeleteTag.Field()
 
 
 class Subscription(graphene.ObjectType):
@@ -1652,7 +2456,3 @@ class Subscription(graphene.ObjectType):
         # This will be handled by our custom consumer
         # The subscription field is just a placeholder for the schema
         return None
-
-
-# Schema
-schema = graphene.Schema(query=Query, mutation=Mutation, subscription=Subscription)
