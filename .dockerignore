@@ -49,3 +49,24 @@ node_modules/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Environment files (reduce context size)
+.env.*
+!.env.example
+
+# Documentation (not needed in container)
+*.md
+!README.md
+
+# Docker development files
+docker-compose.dev.yml
+docker-manage.*
+Dockerfile.optimized
+
+# Media files
+media/
+
+# Temporary files
+tmp/
+temp/
+logs/

@@ -13,7 +13,22 @@ switch ($Command.ToLower()) {
         } else {
             Write-Host "Using current .env file" -ForegroundColor Yellow
         }
+        
+        # Enable BuildKit for faster builds
+        $env:DOCKER_BUILDKIT = 1
+        $env:COMPOSE_DOCKER_CLI_BUILD = 1
+        
+        Write-Host "⚡ BuildKit enabled for faster builds" -ForegroundColor Cyan
         docker-compose up --build
+    }
+    "docker-up-fast" {
+        Write-Host "🚀 Starting Newsor with Docker (no rebuild)..." -ForegroundColor Green
+        if (Test-Path ".env.docker") {
+            Copy-Item ".env.docker" ".env" -Force
+        } else {
+            Write-Host "Using current .env file" -ForegroundColor Yellow
+        }
+        docker-compose up
     }
     "docker-down" {
         Write-Host "🛑 Stopping Docker containers..." -ForegroundColor Red
@@ -59,7 +74,8 @@ switch ($Command.ToLower()) {
         Write-Host "Usage: .\docker-manage.ps1 {command}" -ForegroundColor White
         Write-Host ""
         Write-Host "Commands:" -ForegroundColor Yellow
-        Write-Host "  docker-up     - Start all services with Docker" -ForegroundColor White
+        Write-Host "  docker-up     - Start all services with Docker (with build)" -ForegroundColor White
+        Write-Host "  docker-up-fast- Start all services with Docker (no rebuild)" -ForegroundColor White
         Write-Host "  docker-down   - Stop all Docker services" -ForegroundColor White
         Write-Host "  docker-clean  - Stop and remove all containers/volumes" -ForegroundColor White
         Write-Host "  local         - Switch to local development environment" -ForegroundColor White
