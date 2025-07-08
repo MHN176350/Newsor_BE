@@ -947,23 +947,42 @@ class CreateUser(graphene.Mutation):
                 last_name=last_name or ''
             )
             
-            # Create user profile
-            profile = UserProfile.objects.create(
-                user=user,
-                role='reader',
-                is_verified=False
-            )
+            # Create user profile with avatar if provided
+            profile_data = {
+                'user': user,
+                'role': 'reader',
+                'is_verified': False
+            }
             
             # Handle avatar if provided
-            if avatar:
+            if avatar and avatar.strip():
                 try:
-                    # If avatar is a Cloudinary URL, save it directly
-                    if avatar.startswith('http'):
-                        profile.avatar = avatar
-                        profile.save()
-                except Exception:
-                    # If avatar processing fails, continue without avatar
-                    pass
+                    print(f"DEBUG: Received avatar URL: {avatar}")
+                    # Check if it's a Cloudinary URL or other image URL
+                    if avatar.startswith(('http://', 'https://')):
+                        # For Cloudinary URLs, optimize for storage
+                        from .cloudinary_utils import CloudinaryUtils
+                        if 'cloudinary.com' in avatar:
+                            # Optimize Cloudinary URL for storage
+                            optimized_avatar = CloudinaryUtils.optimize_for_storage(avatar)
+                            profile_data['avatar'] = optimized_avatar
+                            print(f"DEBUG: Optimized Cloudinary avatar: {optimized_avatar}")
+                        else:
+                            # For other URLs, store directly
+                            profile_data['avatar'] = avatar
+                            print(f"DEBUG: Storing non-Cloudinary URL: {avatar}")
+                    else:
+                        # For non-URL strings (base64, etc.), store directly
+                        profile_data['avatar'] = avatar
+                        print(f"DEBUG: Storing non-URL avatar: {avatar[:50]}...")
+                except Exception as e:
+                    # If avatar processing fails, log the error but continue without avatar
+                    print(f"Avatar processing error: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Create profile with or without avatar
+            UserProfile.objects.create(**profile_data)
             
             return CreateUser(user=user, success=True, errors=[])
         
