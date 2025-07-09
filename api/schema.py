@@ -313,12 +313,35 @@ class Query(graphene.ObjectType):
     """
 # Basic queries
     hello = graphene.String(name=graphene.String(default_value='World'))
-    
+    def resolve_hello(self, info, name):
+        """Simple hello world resolver"""
+        return f'Hello {name}'
+
     # User queries
     me = graphene.Field(UserType)
+    def resolve_me(self, info):
+        """Get current authenticated user"""
+        user = info.context.user
+        if user.is_authenticated:
+            return user
+        return None
+    
     users = graphene.List(UserType)
+    def resolve_users(self, info):
+        """Get all users"""
+        return User.objects.all()
+    
     user = graphene.Field(UserType, id=graphene.Int(required=True))
+
     user_profile = graphene.Field(UserProfileType, user_id=graphene.Int(required=True))
+    def resolve_user_profile(self, info, user_id):
+        """Get user profile by user ID"""
+        try:
+            return UserProfile.objects.get(user_id=user_id)
+        except UserProfile.DoesNotExist:
+            return None
+
+    
     user_comment_history = graphene.List(
         CommentType,
         user_id=graphene.Int(required=True),
@@ -362,13 +385,106 @@ class Query(graphene.ObjectType):
                              author_id=graphene.Int(),
                              search=graphene.String(),
                              tag_id=graphene.Int())
+    def resolve_news_list(self, info, status=None, category_id=None, author_id=None, search=None, tag_id=None):
+        """Get news articles with optional filters"""
+        from django.db.models import Q
+        
+        queryset = News.objects.all()
+        
+        if status:
+            queryset = queryset.filter(status=status)
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+        if author_id:
+            queryset = queryset.filter(author_id=author_id)
+        if tag_id:
+            queryset = queryset.filter(tags__id=tag_id)
+        if search:
+            queryset = queryset.filter(
+                Q(title__icontains=search) |
+                Q(content__icontains=search) |
+                Q(excerpt__icontains=search) |
+                Q(meta_keywords__icontains=search)
+            )
+            
+        return queryset.distinct().order_by('-created_at')
+        
+
     news_article = graphene.Field(NewsType, id=graphene.Int(), slug=graphene.String())
+    def resolve_news_article(self, info, id=None, slug=None):
+        """Get news article by ID or slug"""
+        user = info.context.user
+
+        try:
+            if id:
+                news = News.objects.get(pk=id)
+            elif slug:
+                news = News.objects.get(slug=slug)
+            else:
+                return None
+        except News.DoesNotExist:
+            return None
+
+        # check publish
+        if news.status != 'published':
+            if not user.is_authenticated:
+                return None
+            if user != news.author and not user.is_staff:
+                return None
+        return news
+
     published_news = graphene.List(NewsType,
                                   search=graphene.String(),
                                   category_id=graphene.Int(),
                                   tag_id=graphene.Int())
+    def resolve_published_news(self, info, search=None, category_id=None, tag_id=None):
+        """Get published news articles with optional filters"""
+        from django.db.models import Q
+        
+        queryset = News.objects.filter(status='published')
+        
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+        if tag_id:
+            queryset = queryset.filter(tags__id=tag_id)
+        if search:
+            queryset = queryset.filter(
+                Q(title__icontains=search) |
+                Q(content__icontains=search) |
+                Q(excerpt__icontains=search) |
+                Q(meta_keywords__icontains=search)
+            )
+            
+        return queryset.distinct().order_by('-published_at')
+
     news_for_review = graphene.List(NewsType)
+    def resolve_news_for_review(self, info):
+        """Get news articles that need review (for managers)"""
+        # Only allow managers and admins to access this
+        user = info.context.user
+        if not user.is_authenticated:
+            return []
+        
+        try:
+            profile = UserProfile.objects.get(user=user)
+            if profile.role.lower() not in ['manager', 'admin']:
+                return []
+        except UserProfile.DoesNotExist:
+            return []
+        
+        # Return articles that are in draft or pending status
+        return News.objects.filter(status__in=['draft', 'pending','published', 'rejected']).order_by('-created_at')
+
     my_news = graphene.List(NewsType)
+    def resolve_my_news(self, info):
+        """Get current user's news articles"""
+        user = info.context.user
+        if not user.is_authenticated:
+            return []
+        
+        # Return all articles by the current user
+        return News.objects.filter(author=user).order_by('-created_at')
+
     ##############################################  add
     articles_by_category = graphene.List(
         NewsType,
@@ -405,6 +521,7 @@ class Query(graphene.ObjectType):
         if article_id is None:
             return 0
         return Like.objects.filter(article_id=article_id, is_active=True).count()
+    
     article_comment_count = graphene.Int(
         article_id=graphene.Int(required=False)
     )
@@ -415,6 +532,7 @@ class Query(graphene.ObjectType):
         if article_id is None:
             return 0
         return Comment.objects.filter(article_id=article_id).count()
+    
     has_read_article = graphene.Boolean(
         article_id=graphene.Int(required=True)
     )
@@ -429,7 +547,18 @@ class Query(graphene.ObjectType):
     
     # Category and Tag queries
     categories = graphene.List(CategoryType)
+    def resolve_categories(self, info):
+        """Get all categories"""
+        return Category.objects.filter(is_active=True)
+    
     category = graphene.Field(CategoryType, id=graphene.Int())
+    def resolve_category(self, info, id):
+        """Get category by ID"""
+        try:
+            return Category.objects.get(pk=id)
+        except Category.DoesNotExist:
+            return None
+        
     #Search category by key word
     search_categories = graphene.List(CategoryType, keyword=graphene.String(required=True),
         limit=graphene.Int(default_value=10),
@@ -438,7 +567,23 @@ class Query(graphene.ObjectType):
         """ Filter category name containing the keyword (case-insensitive) """
         return Category.objects.filter(name__icontains=keyword)[offset:offset + limit] 
     tags = graphene.List(TagType)
+
+
     admin_tags = graphene.List(TagType)  # Admin-only query to get all tags including inactive
+    def resolve_admin_tags(self, info):
+        """Get all tags for admin management (admin only)"""
+        user = info.context.user
+        if not user.is_authenticated:
+            return []
+        
+        try:
+            profile = UserProfile.objects.get(user=user)
+            if profile.role.lower() != 'admin':
+                return []
+        except UserProfile.DoesNotExist:
+            return []
+        
+        return Tag.objects.all()
     ######################################### add
     #Search tag by key word
     search_tags = graphene.List(
@@ -453,6 +598,12 @@ class Query(graphene.ObjectType):
     ############################################
     # Comment queries
     article_comments = graphene.List(CommentType, article_id=graphene.Int(required=False))
+    def resolve_article_comments(self, info, article_id=None):
+        """Get comments for an article"""
+        if article_id is None:
+            return []
+        return Comment.objects.filter(article_id=article_id)
+    
     article_comments_with_replies = graphene.List(CommentType, article_id=graphene.Int(required=False))
     def resolve_article_comments_with_replies(self, info, article_id):
         """
@@ -537,208 +688,6 @@ class Query(graphene.ObjectType):
     
     # Dashboard queries
     dashboard_stats = graphene.Field(DashboardStatsType)
-    recent_activity = graphene.List(RecentActivityType, limit=graphene.Int())
-    
-    # Notification queries
-    notifications = graphene.List(NotificationType)
-    unread_notifications = graphene.List(NotificationType)
-    notification_count = graphene.Int()
-    
-
-    # Like queries:
-    is_article_liked = graphene.Boolean(article_id=graphene.Int(required=False))
-    def resolve_is_article_liked(self, info, article_id=None):
-        user = info.context.user
-        if user.is_anonymous or article_id is None:
-            return False
-        return Like.objects.filter(user=user, article_id=article_id,is_active=True).exists()
-    
-    is_comment_liked = graphene.Boolean(comment_id=graphene.Int(required=False))
-    def resolve_is_comment_liked(self, info, comment_id=None):
-        user = info.context.user
-        if user.is_anonymous or comment_id is None:
-            return False
-        return Like.objects.filter(user=user, comment_id=comment_id, is_active=True).exists()
-    article_read_count = graphene.Int(
-        article_id=graphene.Int(required=False)
-    )
-    def resolve_article_read_count(self, info, article_id=None):
-        if article_id is None:
-            return 0
-        return ReadingHistory.objects.filter(article_id=article_id).values('user').distinct().count()
-    
-    def resolve_hello(self, info, name):
-        """Simple hello world resolver"""
-        return f'Hello {name}'
-    
-    def resolve_me(self, info):
-        """Get current authenticated user"""
-        user = info.context.user
-        if user.is_authenticated:
-            return user
-        return None
-
-    def resolve_users(self, info):
-        """Get all users"""
-        return User.objects.all()
-    
-    user = graphene.Field(UserType, id=graphene.Int(required=True))
-
-    def resolve_user(self, info, id):
-        """Get user by ID"""
-        try:
-            return User.objects.get(pk=id)
-        except User.DoesNotExist:
-            return None
-        
-    user_profile = graphene.Field(UserProfileType, user_id=graphene.Int(required=True))
-    def resolve_user_profile(self, info, user_id):
-        """Get user profile by user ID"""
-        try:
-            return UserProfile.objects.get(user_id=user_id)
-        except UserProfile.DoesNotExist:
-            return None
-
-    def resolve_news_list(self, info, status=None, category_id=None, author_id=None, search=None, tag_id=None):
-        """Get news articles with optional filters"""
-        from django.db.models import Q
-        
-        queryset = News.objects.all()
-        
-        if status:
-            queryset = queryset.filter(status=status)
-        if category_id:
-            queryset = queryset.filter(category_id=category_id)
-        if author_id:
-            queryset = queryset.filter(author_id=author_id)
-        if tag_id:
-            queryset = queryset.filter(tags__id=tag_id)
-        if search:
-            queryset = queryset.filter(
-                Q(title__icontains=search) |
-                Q(content__icontains=search) |
-                Q(excerpt__icontains=search) |
-                Q(meta_keywords__icontains=search)
-            )
-            
-        return queryset.distinct().order_by('-created_at')
-
-    news_article = graphene.Field(NewsType, id=graphene.Int(), slug=graphene.String())
-    def resolve_news_article(self, info, id=None, slug=None):
-        """Get news article by ID or slug"""
-        try:
-            if id:
-                return News.objects.get(pk=id)
-            elif slug:
-                return News.objects.get(slug=slug)
-        except News.DoesNotExist:
-            return None
-    def resolve_published_news(self, info, search=None, category_id=None, tag_id=None):
-        """Get published news articles with optional filters"""
-        from django.db.models import Q
-        
-        queryset = News.objects.filter(status='published')
-        
-        if category_id:
-            queryset = queryset.filter(category_id=category_id)
-        if tag_id:
-            queryset = queryset.filter(tags__id=tag_id)
-        if search:
-            queryset = queryset.filter(
-                Q(title__icontains=search) |
-                Q(content__icontains=search) |
-                Q(excerpt__icontains=search) |
-                Q(meta_keywords__icontains=search)
-            )
-            
-        return queryset.distinct().order_by('-published_at')
-    
-    def resolve_categories(self, info):
-        """Get all categories"""
-        return Category.objects.filter(is_active=True)
-    
-    category = graphene.Field(CategoryType, id=graphene.Int())
-    def resolve_category(self, info, id):
-        """Get category by ID"""
-        try:
-            return Category.objects.get(pk=id)
-        except Category.DoesNotExist:
-            return None
-        
-    #Search category by key word
-    search_categories = graphene.List(CategoryType, keyword=graphene.String(required=True))
-    def resolve_search_categories(self, info, keyword):
-        """ Filter category name containing the keyword (case-insensitive) """
-        return Category.objects.filter(name__icontains=keyword)[:10]  # Limit to 10 results
-
-# Tag queries
-    tags = graphene.List(TagType)
-    def resolve_tags(self, info):
-        """Get all active tags for public use"""
-        # For admin users, show all tags. For others, show only active tags
-        user = info.context.user
-        if user.is_authenticated:
-            try:
-                profile = UserProfile.objects.get(user=user)
-                if profile.role.lower() == 'admin':
-                    return Tag.objects.all()
-            except UserProfile.DoesNotExist:
-                pass
-        
-        # For non-admin users, return only active tags
-        return Tag.objects.filter(is_active=True)
-
-    def resolve_admin_tags(self, info):
-        """Get all tags for admin management (admin only)"""
-        user = info.context.user
-        if not user.is_authenticated:
-            return []
-        
-        try:
-            profile = UserProfile.objects.get(user=user)
-            if profile.role.lower() != 'admin':
-                return []
-        except UserProfile.DoesNotExist:
-            return []
-        
-        return Tag.objects.all()
-
-    def resolve_news_for_review(self, info):
-        """Get news articles that need review (for managers)"""
-        # Only allow managers and admins to access this
-        user = info.context.user
-        if not user.is_authenticated:
-            return []
-        
-        try:
-            profile = UserProfile.objects.get(user=user)
-            if profile.role.lower() not in ['manager', 'admin']:
-                return []
-        except UserProfile.DoesNotExist:
-            return []
-        
-        # Return articles that are in draft or pending status
-        return News.objects.filter(status__in=['draft', 'pending']).order_by('-created_at')
-
-    def resolve_my_news(self, info):
-        """Get current user's news articles"""
-        user = info.context.user
-        if not user.is_authenticated:
-            return []
-        
-        # Return all articles by the current user
-        return News.objects.filter(author=user).order_by('-created_at')
-
-    def resolve_article_comments(self, info, article_id=None):
-        """Get comments for an article"""
-        if article_id is None:
-            return []
-        return Comment.objects.filter(article_id=article_id)
-
-    # def resolve_user_reading_history(self, info, user_id):
-    #     """Get user's reading history"""
-    #     return ReadingHistory.objects.filter(user_id=user_id)
-         
     def resolve_dashboard_stats(self, info):
         """Get dashboard statistics"""
         from datetime import datetime
@@ -808,6 +757,8 @@ class Query(graphene.ObjectType):
             total_comments=total_comments,
         )
     
+    
+    recent_activity = graphene.List(RecentActivityType, limit=graphene.Int())
     def resolve_recent_activity(self, info, limit=10):
         """Get recent activity"""
         user = info.context.user
@@ -836,6 +787,9 @@ class Query(graphene.ObjectType):
         
         return activities
 
+    
+    # Notification queries
+    notifications = graphene.List(NotificationType)
     def resolve_notifications(self, info):
         """Get all notifications for the current user"""
         user = info.context.user
@@ -845,7 +799,8 @@ class Query(graphene.ObjectType):
         return Notification.objects.filter(
             recipient=user
         ).select_related('sender', 'article').order_by('-created_at')
-
+    
+    unread_notifications = graphene.List(NotificationType)
     def resolve_unread_notifications(self, info):
         """Get unread notifications for the current user"""
         user = info.context.user
@@ -857,6 +812,7 @@ class Query(graphene.ObjectType):
             is_read=False
         ).select_related('sender', 'article').order_by('-created_at')
 
+    notification_count = graphene.Int()
     def resolve_notification_count(self, info):
         """Get count of unread notifications for the current user"""
         user = info.context.user
@@ -866,7 +822,74 @@ class Query(graphene.ObjectType):
         return Notification.objects.filter(
             recipient=user,
             is_read=False
-        ).count()
+        ).count()    
+
+    # Like queries:
+    is_article_liked = graphene.Boolean(article_id=graphene.Int(required=False))
+    def resolve_is_article_liked(self, info, article_id=None):
+        user = info.context.user
+        if user.is_anonymous or article_id is None:
+            return False
+        return Like.objects.filter(user=user, article_id=article_id,is_active=True).exists()
+    
+    is_comment_liked = graphene.Boolean(comment_id=graphene.Int(required=False))
+    def resolve_is_comment_liked(self, info, comment_id=None):
+        user = info.context.user
+        if user.is_anonymous or comment_id is None:
+            return False
+        return Like.objects.filter(user=user, comment_id=comment_id, is_active=True).exists()
+    article_read_count = graphene.Int(
+        article_id=graphene.Int(required=False)
+    )
+    def resolve_article_read_count(self, info, article_id=None):
+        if article_id is None:
+            return 0
+        return ReadingHistory.objects.filter(article_id=article_id).values('user').distinct().count()
+    
+    
+    
+    user = graphene.Field(UserType, id=graphene.Int(required=True))
+
+    def resolve_user(self, info, id):
+        """Get user by ID"""
+        try:
+            return User.objects.get(pk=id)
+        except User.DoesNotExist:
+            return None
+        
+    #Search category by key word
+    search_categories = graphene.List(CategoryType, keyword=graphene.String(required=True))
+    def resolve_search_categories(self, info, keyword):
+        """ Filter category name containing the keyword (case-insensitive) """
+        return Category.objects.filter(name__icontains=keyword)[:10]  # Limit to 10 results
+
+# Tag queries
+    tags = graphene.List(TagType)
+    def resolve_tags(self, info):
+        """Get all active tags for public use"""
+        # For admin users, show all tags. For others, show only active tags
+        user = info.context.user
+        if user.is_authenticated:
+            try:
+                profile = UserProfile.objects.get(user=user)
+                if profile.role.lower() == 'admin':
+                    return Tag.objects.all()
+            except UserProfile.DoesNotExist:
+                pass
+        
+        # For non-admin users, return only active tags
+        return Tag.objects.filter(is_active=True)
+
+    
+
+    
+    
+
+    # def resolve_user_reading_history(self, info, user_id):
+    #     """Get user's reading history"""
+    #     return ReadingHistory.objects.filter(user_id=user_id)
+         
+    
 
     # ...existing code...
     # Like queries:
@@ -1749,7 +1772,7 @@ class UpdateNewsStatus(graphene.Mutation):
                 return UpdateNewsStatus(success=False, errors=['News article not found'])
 
             # Validate status
-            valid_statuses = ['draft', 'pending', 'published', 'rejected']
+            valid_statuses = ['draft', 'pending', 'published', 'rejected', 'archived']
             if status not in valid_statuses:
                 return UpdateNewsStatus(success=False, errors=['Invalid status'])
 
