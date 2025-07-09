@@ -14,7 +14,7 @@ import cloudinary.uploader
 import uuid
 from .cloudinary_utils import CloudinaryUtils
 from django.db.models import Count, Q
-
+from django.db.models import Case, When, Value, IntegerField
 
 class UserType(DjangoObjectType):
     """
@@ -473,7 +473,14 @@ class Query(graphene.ObjectType):
             return []
         
         # Return articles that are in draft or pending status
-        return News.objects.filter(status__in=['draft', 'pending','published', 'rejected']).order_by('-created_at')
+        return News.objects.filter(status__in=['draft', 'pending', 'published', 'rejected']) \
+        .annotate(
+            is_pending=Case(
+                When(status='pending', then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField()
+            )
+        ).order_by('is_pending', '-created_at')
 
     my_news = graphene.List(NewsType)
     def resolve_my_news(self, info):
@@ -483,7 +490,13 @@ class Query(graphene.ObjectType):
             return []
         
         # Return all articles by the current user
-        return News.objects.filter(author=user).order_by('-created_at')
+        return News.objects.filter(author=user).annotate(
+        priority_order=Case(
+            When(status__in=['draft', 'rejected'], then=Value(0)),
+            default=Value(1),
+            output_field=IntegerField()
+        )
+        ).order_by('priority_order', '-created_at')
 
     ##############################################  add
     articles_by_category = graphene.List(
@@ -1405,11 +1418,11 @@ class ToggleTag(graphene.Mutation):
             tag.save()
 
             # If tag is being deactivated, archive all articles with this tag
-            if not tag.is_active:
-                articles_with_tag = News.objects.filter(tags=tag, status__in=['published', 'draft', 'pending'])
-                for article in articles_with_tag:
-                    article.status = 'archived'
-                    article.save()
+            # if not tag.is_active:
+            #     articles_with_tag = News.objects.filter(tags=tag, status__in=['published', 'draft', 'pending'])
+            #     for article in articles_with_tag:
+            #         article.status = 'archived'
+            #         article.save()
 
             return ToggleTag(tag=tag, success=True, errors=[])
 
