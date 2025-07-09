@@ -246,7 +246,7 @@ class Command(BaseCommand):
                 'category': 'Technology',
                 'tags': ['AI', 'Machine Learning', 'Innovation'],
                 'status': 'published',
-                'featured_image_url': 'https://res.cloudinary.com/demo/image/upload/v1640123456/ai_breakthrough.jpg'
+                'featured_image_url': ''
             },
             {
                 'title': 'Championship Finals Set Record Viewership Numbers',
@@ -285,7 +285,7 @@ class Command(BaseCommand):
                 'category': 'Sports',
                 'tags': ['Football', 'Championship', 'Records'],
                 'status': 'published',
-                'featured_image_url': 'https://res.cloudinary.com/demo/image/upload/v1640123456/championship_finals.jpg'
+                'featured_image_url': ''
             },
             {
                 'title': 'New Climate Initiative Promises Carbon Neutrality',
@@ -324,7 +324,7 @@ class Command(BaseCommand):
                 'category': 'Politics',
                 'tags': ['Climate Change', 'Policy', 'Environment'],
                 'status': 'published',
-                'featured_image_url': 'https://res.cloudinary.com/demo/image/upload/v1640123456/climate_initiative.jpg'
+                'featured_image_url': ''
             },
             {
                 'title': 'Stock Market Reaches Historic High Amid Tech Surge',
@@ -370,7 +370,7 @@ class Command(BaseCommand):
                 'category': 'Business',
                 'tags': ['Stock Market', 'Technology', 'Economy'],
                 'status': 'published',
-                'featured_image_url': 'https://res.cloudinary.com/demo/image/upload/v1640123456/stock_market_surge.jpg'
+                'featured_image_url': ''
             },
             {
                 'title': 'Medical Breakthrough Offers Hope for Rare Disease Patients',
@@ -414,7 +414,7 @@ class Command(BaseCommand):
                 'category': 'Health',
                 'tags': ['Medical Research', 'Gene Therapy', 'Healthcare'],
                 'status': 'published',
-                'featured_image_url': 'https://res.cloudinary.com/demo/image/upload/v1640123456/medical_breakthrough.jpg'
+                'featured_image_url': ''
             },
             {
                 'title': 'Space Mission Discovers Potentially Habitable Exoplanet',
@@ -463,7 +463,7 @@ class Command(BaseCommand):
                 'category': 'Science',
                 'tags': ['Space Exploration', 'Exoplanets', 'NASA'],
                 'status': 'published',
-                'featured_image_url': 'https://res.cloudinary.com/demo/image/upload/v1640123456/exoplanet_discovery.jpg'
+                'featured_image_url': ''
             },
             {
                 'title': 'Draft Article: Emerging Trends in Sustainable Architecture',
@@ -511,7 +511,7 @@ class Command(BaseCommand):
                 'category': 'Education',
                 'tags': ['Digital Learning', 'Education Technology', 'Innovation'],
                 'status': 'pending',
-                'featured_image_url': 'https://res.cloudinary.com/demo/image/upload/v1640123456/digital_education.jpg'
+                'featured_image_url': ''
             }
         ]
 
