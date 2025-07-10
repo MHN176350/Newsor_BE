@@ -1,4 +1,5 @@
 
+# --- News Delete Mutation ---
 import graphene
 from graphene_django import DjangoObjectType
 from django.contrib.auth.models import User
@@ -14,6 +15,49 @@ import cloudinary.uploader
 import uuid
 from .cloudinary_utils import CloudinaryUtils
 from django.db.models import Count, Q
+
+
+class DeleteNews(graphene.Mutation):
+    """
+    Delete a news article (for managers/admins, or the article's author if draft/archived)
+    """
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, id):
+        user = info.context.user
+        if not user.is_authenticated:
+            return DeleteNews(success=False, errors=["Authentication required"])
+
+        try:
+            # Get the article
+            try:
+                news = News.objects.get(id=id)
+            except News.DoesNotExist:
+                return DeleteNews(success=False, errors=["Article not found"]) 
+
+            # Only allow delete if:
+            # - user is admin/manager, or
+            # - user is the author and article is draft/archived
+            profile = UserProfile.objects.get(user=user)
+            user_role = profile.role.lower()
+            if user_role in ["admin", "manager"]:
+                pass  # can delete any
+            elif news.author.id == user.id and news.status.lower() in ["draft", "archived"]:
+                pass  # can delete own draft/archived
+            else:
+                return DeleteNews(success=False, errors=["Permission denied. Only admins, managers, or the article's author (if draft/archived) can delete."])
+
+            news.delete()
+            return DeleteNews(success=True, errors=[])
+
+        except UserProfile.DoesNotExist:
+            return DeleteNews(success=False, errors=["User profile not found"])
+        except Exception as e:
+            return DeleteNews(success=False, errors=[str(e)])
 
 
 class UserType(DjangoObjectType):
@@ -1158,28 +1202,23 @@ class CreateCategory(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
-        slug = graphene.String(required=True)
-        description = graphene.String(required=True)
+        description = graphene.String(required=False)
     category = graphene.Field(CategoryType)
     success = graphene.Boolean()
     errors = graphene.String()
 
-    def mutate(self, info, name, slug, description=""):
+    def mutate(self, info, name, description=""):
         try:
-            # Check name and slug existed
-            if Category.objects.filter(slug=slug).exists():
-                return CreateCategory(success=False, errors="Slug already exists.", category=None)
+            # Check if name already exists
             if Category.objects.filter(name=name).exists():
                 return CreateCategory(success=False, errors="Name already exists.", category=None)
 
-            # Create new Category
-            
+            # Create new Category (slug will be auto-generated in model save method)
             category = Category.objects.create(
                 name=name,
-                slug=slug,
                 description=description,
             )
-            return CreateCategory(category = category, success=True, errors="Category created successfully.")
+            return CreateCategory(category=category, success=True, errors="Category created successfully.")
         except Exception as e:
             return CreateCategory(success=False, errors="Unexpected error: " + str(e), category=None)
 
@@ -1258,26 +1297,21 @@ class CreateTag(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
-        slug = graphene.String(required=True)
     tag = graphene.Field(TagType)
     success = graphene.Boolean()
     errors = graphene.String()
 
-    def mutate(self, info, name, slug, description=""):
+    def mutate(self, info, name):
         try:
-            # Check name and slug existed
-            if Tag.objects.filter(slug=slug).exists():
-                return CreateTag(success=False, errors="Slug already exists.", tag=None)
+            # Check if name already exists
             if Tag.objects.filter(name=name).exists():
                 return CreateTag(success=False, errors="Name already exists.", tag=None)
 
-            # Create new Tag
-            
+            # Create new Tag (slug will be auto-generated in model save method)
             tag = Tag.objects.create(
                 name=name,
-                slug=slug,
             )
-            return CreateTag(tag = tag, success=True, errors="Tag created successfully.")
+            return CreateTag(tag=tag, success=True, errors="Tag created successfully.")
         except Exception as e:
             return CreateTag(success=False, errors="Unexpected error: " + str(e), tag=None)
 
@@ -1749,7 +1783,7 @@ class UpdateNewsStatus(graphene.Mutation):
                 return UpdateNewsStatus(success=False, errors=['News article not found'])
 
             # Validate status
-            valid_statuses = ['draft', 'pending', 'published', 'rejected']
+            valid_statuses = ['draft', 'pending', 'published', 'archived']
             if status not in valid_statuses:
                 return UpdateNewsStatus(success=False, errors=['Invalid status'])
 
@@ -2427,12 +2461,21 @@ class CreateReadingHistory(graphene.Mutation):
             return CreateReadingHistory(success=False, errors="Unexpected error: " + str(e))
 
 
-# ...existing mutations...
+
+# =========================
+# Mutations and Schema
+# =========================
+
+
+# =========================
+# GraphQL Mutation Root
+# =========================
 
 class Mutation(graphene.ObjectType):
     """
     API GraphQL Mutations
     """
+    delete_news = DeleteNews.Field()
     create_user = CreateUser.Field()
     update_user_profile = UpdateUserProfile.Field()
     change_password = ChangePassword.Field()
