@@ -148,3 +148,55 @@ class NotificationService:
             queryset = queryset.filter(id__in=notification_ids)
         
         return queryset.update(is_read=True, read_at=timezone.now())
+    
+
+    @staticmethod
+    def notify_admin_form_submission(form_data):
+        """
+        Notify admin when a user submits a form for contact
+        """
+        # Get all managers and admins
+        managers = User.objects.filter(
+            profile__role__in=['admin'],
+            is_active=True
+        )
+        
+        notifications_created = []
+        for manager in managers:
+            notification = Notification.objects.create(
+                recipient=manager,
+                notification_type='system',
+                title=f'New Form Submitted',
+                message=f'{form_data.name} has submitted  for contact.',
+            )
+            notifications_created.append(notification)
+            
+            # Send real-time notification
+            NotificationService._send_realtime_notification_admin(manager.id, notification)
+        
+        return notifications_created
+    
+    @staticmethod
+    def _send_realtime_notification_admin(user_id, notification):
+        """
+        Send real-time notification via WebSocket
+        """
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            # Serialize notification data
+            notification_data = {
+                'id': str(notification.id),
+                'message': notification.message,
+                'notificationType': notification.notification_type,
+                'createdAt': notification.created_at.isoformat(),
+            }
+            
+            # Send to user's group
+            group_name = f'notifications_{user_id}'
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    'type': 'notification_message',
+                    'notification': notification_data
+                }
+            )

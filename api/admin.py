@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     Category, Tag, UserProfile, News, Comment, 
-    Like, ReadingHistory, NewsletterSubscription
+    Like, ReadingHistory, NewsletterSubscription, ContactMessage,EmailTemplate
 )
 
 
@@ -82,3 +82,17 @@ class NewsletterSubscriptionAdmin(admin.ModelAdmin):
     list_display = ['email', 'user', 'is_active', 'created_at']
     list_filter = ['is_active', 'created_at']
     search_fields = ['email']
+
+
+@admin.register(ContactMessage)
+class ContactMessageAdmin(admin.ModelAdmin):
+    list_display = ('name', 'email', 'phone', 'service', 'created_at', 'email_sent')
+    list_filter = ('service', 'email_sent', 'created_at')
+    search_fields = ('name', 'email', 'phone', 'message')
+    readonly_fields = ('created_at',)
+
+@admin.register(EmailTemplate)
+class EmailTemplateAdmin(admin.ModelAdmin):
+    list_display = ('subject', 'updated_at')
+    search_fields = ('subject',)
+    readonly_fields = ('updated_at',)

@@ -4,8 +4,10 @@ from graphene_django import DjangoObjectType
 from django.contrib.auth.models import User
 from .models import (
     Category, Tag, UserProfile, News, Comment, 
-    Like, ReadingHistory, NewsletterSubscription, ArticleImage, Notification
+    Like, ReadingHistory, NewsletterSubscription, ArticleImage, Notification, ContactMessage,
+    EmailTemplate
 )
+
 from .utils import sanitize_html_content, get_cloudinary_upload_signature
 import base64
 import io
@@ -15,6 +17,10 @@ import uuid
 from .cloudinary_utils import CloudinaryUtils
 from django.db.models import Count, Q
 from django.db.models import Case, When, Value, IntegerField
+from datetime import timedelta
+from django.utils import timezone
+from mail.send_mail import send_html_email
+from django.template import Template, Context
 
 class UserType(DjangoObjectType):
     """
@@ -306,6 +312,30 @@ class RecentActivityType(graphene.ObjectType):
     timestamp = graphene.DateTime()
     user = graphene.Field(UserType)
 
+
+class ContactMessageType(DjangoObjectType):
+    """
+    GraphQL ContactMessage type
+    """
+    class Meta:
+        model = ContactMessage
+        fields = '__all__'
+    
+    def resolve_user(self, info):
+        """Resolve the user who sent the message"""
+        return self.user if self.user else None
+
+class EmailTemplateType(DjangoObjectType):
+    """
+    GraphQL EmailTemplate type
+    """
+    class Meta:
+        model = EmailTemplate
+        fields = ('id', 'subject', 'html_content', 'updated_at')
+    
+    def resolve_html_content(self, info):
+        """Resolve HTML content with sanitization"""
+        return sanitize_html_content(self.html_content)
 
 class Query(graphene.ObjectType):
     """
@@ -943,6 +973,40 @@ class Query(graphene.ObjectType):
         
         return activities
 
+    contact_messages = graphene.List(
+        ContactMessageType,
+        from_date=graphene.Date(required=False),
+        to_date=graphene.Date(required=False),
+        search=graphene.String(required=False),
+        service=graphene.String(required=False),  
+    )
+    def resolve_contact_messages(self, info, from_date=None, to_date=None, search=None, service=None):
+        qs = ContactMessage.objects.all()
+
+        # filter by date range
+        if from_date:
+            qs = qs.filter(created_at__date__gte=from_date)
+        if to_date:
+            qs = qs.filter(created_at__date__lte=to_date)
+
+        # filter by search term
+        if search:
+            qs = qs.filter(
+                Q(name__icontains=search) |
+                Q(email__icontains=search) |
+                Q(phone__icontains=search)
+            )
+
+        # filter by service
+        if service:
+            qs = qs.filter(service=service)
+
+        return qs.order_by("-created_at")
+
+    first_email_template = graphene.Field(EmailTemplateType)
+
+    def resolve_first_email_template(self, info):
+        return EmailTemplate.objects.first()
 
     # ...existing code...
     
@@ -2462,6 +2526,100 @@ class CreateReadingHistory(graphene.Mutation):
         except Exception as e:
             return CreateReadingHistory(success=False, errors="Unexpected error: " + str(e))
 
+class CreateContact(graphene.Mutation):
+    class Arguments:
+        name = graphene.String(required=True)
+        email = graphene.String(required=True)
+        message = graphene.String(required=True)
+        phone = graphene.String(required=True)
+        service = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    message = graphene.String()
+
+    def mutate(self, info, name, email, message,phone, service):
+        now = timezone.now()
+        # Kiểm tra nếu có bản ghi gần đây từ cùng email chưa được gửi
+        recent = ContactMessage.objects.filter(email=email).order_by("-created_at").first()
+        if recent and recent.email_sent==True and (now - recent.created_at) < timedelta(minutes=5):
+            return CreateContact(
+                success=False,
+                message="Bạn vừa gửi liên hệ gần đây. Vui lòng chờ vài phút trước khi gửi lại."
+            )
+
+        # Lưu bản ghi mới
+        contact = ContactMessage.objects.create(name=name, email=email, message=message, phone=phone, service=service)
+        # from .notification_service import NotificationService
+        # NotificationService.notify_admin_form_submission(contact)
+        # Soạn nội dung email
+
+        context = Context({
+            "name": name,
+            "email": email,
+            "message": message,
+            "phone": phone,
+            "service": service
+        })
+        template_obj = EmailTemplate.objects.get(id=1)  # Assuming template ID 1 is the contact confirmation template
+        # Render HTML template with context
+        template = Template(template_obj.html_content)
+        rendered_html = template.render(context)
+        # send the email
+        success, msg = send_html_email(to_email=email,subject=template_obj.subject, html_content=rendered_html)
+
+        if success:
+            contact.email_sent = True
+            contact.save(update_fields=["email_sent"])
+
+        return CreateContact(success=success, message=msg)
+    
+class UpdateEmailTemplate(graphene.Mutation):
+    """
+    Update an existing email template's subject and HTML content
+    """
+
+    class Arguments:
+        subject = graphene.String(required=False)
+        html_content = graphene.String(required=False)
+
+    success = graphene.Boolean()
+    errors = graphene.String()
+    emailTemplate = graphene.Field(EmailTemplateType)
+
+    def mutate(self, info, subject=None, html_content=None):
+        try:
+            template = EmailTemplate.objects.get(id=1)
+
+            if subject:
+                template.subject = subject
+
+            if html_content:
+                template.html_content = html_content
+
+            template.save()
+
+            return UpdateEmailTemplate(
+                success=True,
+                errors="Template updated successfully.",
+                emailTemplate=template
+            )
+
+        except EmailTemplate.DoesNotExist:
+            return UpdateEmailTemplate(
+                success=False,
+                errors="Email template not found.",
+                emailTemplate=None
+            )
+
+        except Exception as e:
+            return UpdateEmailTemplate(
+                success=False,
+                errors=f"Unexpected error: {str(e)}",
+                emailTemplate=None
+            )
+
+class Mutation(graphene.ObjectType):
+    create_contact = CreateContact.Field()
 
 # ...existing mutations...
 
@@ -2496,6 +2654,8 @@ class Mutation(graphene.ObjectType):
     delete_category = DeleteCategory.Field()
     update_tag = UpdateTag.Field()
     delete_tag = DeleteTag.Field()
+    create_contact = CreateContact.Field()
+    update_email_template = UpdateEmailTemplate.Field()
 
 
 class Subscription(graphene.ObjectType):

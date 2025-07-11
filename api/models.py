@@ -370,3 +370,27 @@ class Notification(models.Model):
             self.is_read = True
             self.read_at = timezone.now()
             self.save(update_fields=['is_read', 'read_at'])
+    
+class ContactMessage(models.Model):
+    SERVICE_CHOICES = [
+        ('consulting', 'Consulting'),
+        ('development', 'Development'),
+        ('marketing', 'Marketing'),
+        ('support', 'Support'),
+    ]
+
+    name = models.CharField(max_length=100)  
+    email = models.EmailField()              
+    phone = models.CharField(max_length=20)  
+    service = models.CharField(max_length=50, choices=SERVICE_CHOICES)  
+    message = models.TextField() 
+    created_at = models.DateTimeField(auto_now_add=True)
+    email_sent = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"{self.name} ({self.email})"
+    
+class EmailTemplate(models.Model):
+    subject = models.CharField(max_length=255)
+    html_content = models.TextField()
+    updated_at = models.DateTimeField(auto_now=True)
