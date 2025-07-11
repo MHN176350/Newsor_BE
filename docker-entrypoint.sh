@@ -25,5 +25,12 @@ else:
 echo "Populating sample data..."
 python manage.py populate_sample_data
 
+echo "Updating email templates..."
+if python update_email_template.py; then
+    echo "Email templates updated successfully"
+else
+    echo "Warning: Failed to update email templates, continuing anyway..."
+fi
+
 echo "Starting server..."
 exec "$@"

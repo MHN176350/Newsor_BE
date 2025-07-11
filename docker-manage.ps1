@@ -56,6 +56,14 @@ switch ($Command.ToLower()) {
         Write-Host "🔄 Running database migrations in Docker..." -ForegroundColor Cyan
         docker-compose exec web python manage.py migrate
     }
+    "update-templates" {
+        Write-Host "📧 Updating email templates in Docker..." -ForegroundColor Cyan
+        docker-compose exec web python update_email_template.py
+    }
+    "test-templates" {
+        Write-Host "🧪 Testing email templates in Docker..." -ForegroundColor Cyan
+        docker-compose exec web python test_email_template.py
+    }
     "shell" {
         Write-Host "🐚 Opening Django shell in Docker container..." -ForegroundColor Cyan
         docker-compose exec web python manage.py shell
@@ -81,6 +89,8 @@ switch ($Command.ToLower()) {
         Write-Host "  local         - Switch to local development environment" -ForegroundColor White
         Write-Host "  docker-env    - Switch to Docker environment" -ForegroundColor White
         Write-Host "  migrate       - Run migrations in Docker container" -ForegroundColor White
+        Write-Host "  update-templates - Update email templates in Docker container" -ForegroundColor White
+        Write-Host "  test-templates - Test email templates in Docker container" -ForegroundColor White
         Write-Host "  shell         - Open Django shell in Docker container" -ForegroundColor White
         Write-Host "  logs          - Show Docker container logs" -ForegroundColor White
         Write-Host "  status        - Show status of Docker containers" -ForegroundColor White

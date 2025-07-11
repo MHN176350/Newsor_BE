@@ -104,7 +104,16 @@ Use the PowerShell script `docker-manage.ps1` for easy management:
 
 ## Database Migrations
 
-Migrations are automatically run when starting the Docker container. To run them manually:
+Migrations are automatically run when starting the Docker container. The startup process includes:
+
+1. **Database Connection Check** - Waits for PostgreSQL to be ready
+2. **Run Migrations** - Applies any pending database migrations
+3. **Create Superuser** - Creates admin user if it doesn't exist (admin/admin123)
+4. **Populate Sample Data** - Loads initial sample data
+5. **Update Email Templates** - Updates email templates from `update_email_template.py`
+6. **Start Server** - Launches the Django application
+
+To run migrations manually:
 
 ```powershell
 .\docker-manage.ps1 migrate
