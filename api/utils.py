@@ -76,3 +76,31 @@ def extract_image_urls_from_content(content):
     img_pattern = r'<img[^>]+src="([^"]+)"[^>]*>'
     matches = re.findall(img_pattern, content)
     return matches
+
+
+def is_new_contact_email(email):
+    """
+    Check if an email address is new (not already in the Contact database)
+    
+    Args:
+        email (str): Email address to check
+        
+    Returns:
+        bool: True if email is new, False if already exists
+    """
+    from .models import Contact
+    return not Contact.objects.filter(email=email).exists()
+
+
+def should_send_welcome_email(email):
+    """
+    Determine if a welcome/thank-you email should be sent for this email address.
+    Only sends to new contacts (emails not previously in the database).
+    
+    Args:
+        email (str): Email address to check
+        
+    Returns:
+        bool: True if email should be sent, False otherwise
+    """
+    return is_new_contact_email(email)

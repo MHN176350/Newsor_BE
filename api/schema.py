@@ -1,11 +1,10 @@
-
 # --- News Delete Mutation ---
 import graphene
 from graphene_django import DjangoObjectType
 from django.contrib.auth.models import User
 from .models import (
     Category, Tag, UserProfile, News, Comment, 
-    Like, ReadingHistory, NewsletterSubscription, ArticleImage, Notification
+    Like, ReadingHistory, NewsletterSubscription, ArticleImage, Notification, Contact, EmailTemplate
 )
 from .utils import sanitize_html_content, get_cloudinary_upload_signature
 import base64
@@ -310,6 +309,35 @@ class NotificationType(DjangoObjectType):
         fields = '__all__'
 
 
+class ContactType(DjangoObjectType):
+    """
+    GraphQL Contact type
+    """
+    class Meta:
+        model = Contact
+        fields = '__all__'
+
+
+class EmailTemplateType(DjangoObjectType):
+    """
+    GraphQL Email Template type
+    """
+    class Meta:
+        model = EmailTemplate
+        fields = '__all__'
+
+
+# Contact Connection for pagination
+class ContactConnection(graphene.relay.Connection):
+    class Meta:
+        node = ContactType
+    
+    total_count = graphene.Int()
+    
+    def resolve_total_count(self, info):
+        return Contact.objects.count()
+
+
 class DashboardStatsType(graphene.ObjectType):
     """
     Dashboard statistics type
@@ -497,7 +525,7 @@ class Query(graphene.ObjectType):
     ############################################
     # Comment queries
     article_comments = graphene.List(CommentType, article_id=graphene.Int(required=False))
-    article_comments_with_replies = graphene.List(CommentType, article_id=graphene.Int(required=False))
+   
     def resolve_article_comments_with_replies(self, info, article_id):
         """
         Get all comments for an article with nested replies (all levels)
@@ -587,6 +615,21 @@ class Query(graphene.ObjectType):
     notifications = graphene.List(NotificationType)
     unread_notifications = graphene.List(NotificationType)
     notification_count = graphene.Int()
+    
+    # Contact queries
+    contacts = graphene.relay.ConnectionField(
+        'api.schema.ContactConnection',
+        first=graphene.Int(),
+        after=graphene.String()
+    )
+    email_template = graphene.Field(
+        EmailTemplateType,
+        name=graphene.String(required=True)
+    )
+    email_templates = graphene.List(
+        EmailTemplateType,
+        template_type=graphene.String()
+    )
     
 
     # Like queries:
@@ -911,6 +954,71 @@ class Query(graphene.ObjectType):
             recipient=user,
             is_read=False
         ).count()
+
+    def resolve_contacts(self, info, **kwargs):
+        """
+        Get all contacts (admin/manager only)
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return Contact.objects.none()
+        
+        try:
+            profile = UserProfile.objects.get(user=user)
+            user_role = profile.role.lower()
+            if user_role not in ["admin", "manager"]:
+                return Contact.objects.none()
+        except UserProfile.DoesNotExist:
+            return Contact.objects.none()
+        
+        return Contact.objects.all().order_by('-created_at')
+    
+    def resolve_email_template(self, info, name):
+        """
+        Get email template by name
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return None
+        
+        try:
+            profile = UserProfile.objects.get(user=user)
+            user_role = profile.role.lower()
+            if user_role not in ["admin", "manager"]:
+                return None
+        except UserProfile.DoesNotExist:
+            return None
+        
+        try:
+            return EmailTemplate.objects.get(name=name)
+        except EmailTemplate.DoesNotExist:
+            # Return default template if not found
+            return EmailTemplate(
+                name=name,
+                subject="Thank you for contacting us",
+                content="Dear {{name}},\n\nThank you for contacting us regarding {{request_service}}. We have received your message and will get back to you soon.\n\nBest regards,\nEvoluSoft Team",
+                variables=['name', 'request_service', 'request_content']
+            )
+
+    def resolve_email_templates(self, info, template_type=None):
+        """
+        Get all email templates, optionally filtered by type
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return []
+        
+        try:
+            profile = UserProfile.objects.get(user=user)
+            user_role = profile.role.lower()
+            if user_role not in ["admin", "manager"]:
+                return []
+        except UserProfile.DoesNotExist:
+            return []
+        
+        if template_type:
+            return EmailTemplate.objects.filter(template_type=template_type, is_active=True)
+        return EmailTemplate.objects.filter(is_active=True)
 
     # ...existing code...
     # Like queries:
@@ -1711,595 +1819,6 @@ class UploadAvatarImage(graphene.Mutation):
         except Exception as e:
             return UploadAvatarImage(success=False, errors=[f"Avatar upload failed: {str(e)}"])
 
-
-class UploadRegistrationAvatarImage(graphene.Mutation):
-    """
-    Upload avatar image for registration (no authentication required)
-    """
-    class Arguments:
-        base64Data = graphene.String(required=True, description="Base64 encoded avatar image")
-
-    url = graphene.String()
-    success = graphene.Boolean()
-    errors = graphene.List(graphene.String)
-
-    def mutate(self, info, base64Data):
-        """
-        Upload avatar image without authentication for registration
-        """
-        try:
-            # Upload the image with avatar-specific settings
-            upload_mutation = UploadBase64Image()
-            upload_result = upload_mutation.mutate(
-                info, 
-                base64Data=base64Data,
-                folder="newsor/avatars/temp",  # Use temp folder for registration avatars
-                maxWidth=400,
-                maxHeight=400,
-                quality="auto",
-                format="auto"
-            )
-            
-            if not upload_result.success:
-                return UploadRegistrationAvatarImage(success=False, errors=upload_result.errors)
-            
-            return UploadRegistrationAvatarImage(url=upload_result.url, success=True, errors=[])
-            
-        except Exception as e:
-            return UploadRegistrationAvatarImage(success=False, errors=[f"Avatar upload failed: {str(e)}"])
-
-
-class UpdateNewsStatus(graphene.Mutation):
-    """
-    Update news article status (for managers)
-    """
-    class Arguments:
-        id = graphene.Int(required=True)
-        status = graphene.String(required=True)
-        review_comment = graphene.String()
-
-    news = graphene.Field(NewsType)
-    success = graphene.Boolean()
-    errors = graphene.List(graphene.String)
-
-    def mutate(self, info, id, status, review_comment=None):
-        """
-        Update news article status mutation
-        """
-        user = info.context.user
-        if not user.is_authenticated:
-            return UpdateNewsStatus(success=False, errors=['Authentication required'])
-
-        try:
-            # Check if user has manager role or higher
-            profile = UserProfile.objects.get(user=user)
-            if profile.role.lower() not in ['manager', 'admin']:
-                return UpdateNewsStatus(success=False, errors=['Permission denied. Manager role required.'])
-
-            # Get the news article
-            try:
-                news = News.objects.get(id=id)
-            except News.DoesNotExist:
-                return UpdateNewsStatus(success=False, errors=['News article not found'])
-
-            # Validate status
-            valid_statuses = ['draft', 'pending', 'published', 'archived']
-            if status not in valid_statuses:
-                return UpdateNewsStatus(success=False, errors=['Invalid status'])
-
-            # Update the news article
-            old_status = news.status
-            news.status = status
-            if status == 'published':
-                from django.utils import timezone
-                news.published_at = timezone.now()
-            
-            news.save()
-
-            # Create notifications based on status change
-            from .notification_service import NotificationService
-            
-            if old_status != status:
-                if status == 'published':
-                    NotificationService.notify_writer_of_publication(news)
-                elif status == 'approved':
-                    NotificationService.notify_writer_of_approval(news, user)
-                elif status == 'rejected':
-                    NotificationService.notify_writer_of_rejection(news, user, review_comment)
-
-            return UpdateNewsStatus(news=news, success=True, errors=[])
-
-        except UserProfile.DoesNotExist:
-            return UpdateNewsStatus(success=False, errors=['User profile not found'])
-        except Exception as e:
-            return UpdateNewsStatus(success=False, errors=[str(e)])
-
-
-class UpdateNews(graphene.Mutation):
-    """
-    Update an existing news article (for writers)
-    """
-    class Arguments:
-        id = graphene.Int(required=True)
-        title = graphene.String(required=True)
-        content = graphene.String(required=True)
-        excerpt = graphene.String(required=True)
-        categoryId = graphene.Int(required=True)
-        tagIds = graphene.List(graphene.Int)
-        featuredImage = graphene.String()  # Cloudinary URL
-        metaDescription = graphene.String()
-        metaKeywords = graphene.String()
-
-    news = graphene.Field(NewsType)
-    success = graphene.Boolean()
-    errors = graphene.List(graphene.String)
-
-    def mutate(self, info, id, title, content, excerpt, categoryId, tagIds=None, 
-               featuredImage=None, metaDescription=None, metaKeywords=None):
-        """
-        Update news article mutation
-        """
-        user = info.context.user
-        if not user.is_authenticated:
-            return UpdateNews(success=False, errors=['Authentication required'])
-
-        try:
-            # Check if user has writer role or higher
-            profile = UserProfile.objects.get(user=user)
-            if profile.role.lower() not in ['writer', 'manager', 'admin']:
-                return UpdateNews(success=False, errors=['Permission denied. Writer role required.'])
-
-            # Get the existing news article
-            try:
-                news = News.objects.get(id=id)
-            except News.DoesNotExist:
-                return UpdateNews(success=False, errors=['Article not found'])
-
-            # Check if user owns the article (unless they're admin/manager)
-            if profile.role.lower() not in ['admin', 'manager'] and news.author.id != user.id:
-                return UpdateNews(success=False, errors=['Permission denied. You can only edit your own articles.'])
-
-            # Check if article can be edited (only drafts and rejected articles)
-            if news.status.lower() not in ['draft', 'rejected']:
-                return UpdateNews(success=False, errors=['You can only edit articles that are in draft or rejected status.'])
-
-            # Check if category exists
-            try:
-                category = Category.objects.get(id=categoryId)
-            except Category.DoesNotExist:
-                return UpdateNews(success=False, errors=['Category not found'])
-
-            # Sanitize HTML content
-            sanitized_content = sanitize_html_content(content)
-
-            # Update news article
-            news.title = title
-            news.content = sanitized_content
-            news.excerpt = excerpt
-            news.category = category
-            news.featured_image = featuredImage or ''
-            news.meta_description = metaDescription or ''
-            news.meta_keywords = metaKeywords or ''
-            
-            # Update slug if title changed
-            from django.utils.text import slugify
-            new_slug = slugify(title)
-            if new_slug != news.slug:
-                # Ensure slug is unique
-                counter = 1
-                original_slug = new_slug
-                while News.objects.filter(slug=new_slug).exclude(id=id).exists():
-                    new_slug = f"{original_slug}-{counter}"
-                    counter += 1
-                news.slug = new_slug
-            
-            # Change status to pending after update (for review)
-            old_status = news.status
-            news.status = 'pending'
-            
-            news.save()
-            
-            # Notify managers about the update if status changed
-            if old_status != 'pending':
-                from .notification_service import NotificationService
-                NotificationService.notify_managers_of_submission(news)
-
-            # Update tags if provided
-            if tagIds is not None:
-                tags = Tag.objects.filter(id__in=tagIds)
-                news.tags.set(tags)
-
-            return UpdateNews(news=news, success=True, errors=[])
-
-        except UserProfile.DoesNotExist:
-            return UpdateNews(success=False, errors=['User profile not found'])
-        except Exception as e:
-            return UpdateNews(success=False, errors=[str(e)])
-
-
-# class ToggleLike(graphene.Mutation):
-#     """
-#     Toggle like/unlike for articles or comments
-#     """
-#     class Arguments:
-#         newsId = graphene.Int()
-#         commentId = graphene.Int()
-
-#     success = graphene.Boolean()
-#     liked = graphene.Boolean()
-#     likes_count = graphene.Int()
-#     errors = graphene.List(graphene.String)
-
-#     def mutate(self, info, newsId=None, commentId=None):
-#         """
-#         Toggle like mutation
-#         """
-#         user = info.context.user
-#         if not user.is_authenticated:
-#             return ToggleLike(success=False, errors=['Authentication required'])
-
-#         try:
-#             # Validate input - must provide either newsId or commentId
-#             if not newsId and not commentId:
-#                 return ToggleLike(success=False, errors=['Must provide either newsId or commentId'])
-            
-#             if newsId and commentId:
-#                 return ToggleLike(success=False, errors=['Cannot like both news and comment in same request'])
-
-#             if newsId:
-#                 # Handle news like
-#                 try:
-#                     news = News.objects.get(id=newsId)
-#                 except News.DoesNotExist:
-#                     return ToggleLike(success=False, errors=['News article not found'])
-
-#                 like, created = Like.objects.get_or_create(
-#                     user=user,
-#                     article=news,
-#                     defaults={'comment': None}
-#                 )
-
-#                 if not created:
-#                     # Unlike - remove the like
-#                     like.delete()
-#                     liked = False
-#                 else:
-#                     # Like created
-#                     liked = True
-
-#                 # Get updated like count
-#                 likes_count = news.likes.count()
-                
-#                 return ToggleLike(
-#                     success=True,
-#                     liked=liked,
-#                     likes_count=likes_count,
-#                     errors=[]
-#                 )
-
-#             elif commentId:
-#                 # Handle comment like
-#                 try:
-#                     comment = Comment.objects.get(id=commentId)
-#                 except Comment.DoesNotExist:
-#                     return ToggleLike(success=False, errors=['Comment not found'])
-
-#                 like, created = Like.objects.get_or_create(
-#                     user=user,
-#                     comment=comment,
-#                     defaults={'article': None}
-#                 )
-
-#                 if not created:
-#                     # Unlike - remove the like
-#                     like.delete()
-#                     liked = False
-#                 else:
-#                     # Like created
-#                     liked = True
-
-#                 # Get updated like count
-#                 likes_count = comment.likes.count()
-                
-#                 return ToggleLike(
-#                     success=True,
-#                     liked=liked,
-#                     likes_count=likes_count,
-#                     errors=[]
-#                 )
-
-#         except Exception as e:
-#             return ToggleLike(success=False, errors=[str(e)])
-
-# ...existing mutations...
-
-class MarkNotificationAsRead(graphene.Mutation):
-    """
-    Mark a notification as read
-    """
-    class Arguments:
-        notificationId = graphene.Int(required=True)
-
-    success = graphene.Boolean()
-    notification = graphene.Field(NotificationType)
-    errors = graphene.List(graphene.String)
-
-    def mutate(self, info, notificationId):
-        user = info.context.user
-        if not user.is_authenticated:
-            return MarkNotificationAsRead(success=False, errors=["Authentication required"])
-
-        try:
-            notification = Notification.objects.get(id=notificationId, recipient=user)
-            notification.mark_as_read()
-            return MarkNotificationAsRead(success=True, notification=notification)
-        except Notification.DoesNotExist:
-            return MarkNotificationAsRead(success=False, errors=["Notification not found"])
-        except Exception as e:
-            return MarkNotificationAsRead(success=False, errors=[str(e)])
-
-
-class MarkAllNotificationsAsRead(graphene.Mutation):
-    """
-    Mark all notifications as read for the current user
-    """
-    success = graphene.Boolean()
-    count = graphene.Int()
-    errors = graphene.List(graphene.String)
-
-    def mutate(self, info):
-        user = info.context.user
-        if not user.is_authenticated:
-            return MarkAllNotificationsAsRead(success=False, errors=["Authentication required"])
-
-        try:
-            from .notification_service import NotificationService
-            count = NotificationService.mark_notifications_as_read(user)
-            return MarkAllNotificationsAsRead(success=True, count=count)
-        except Exception as e:
-            return MarkAllNotificationsAsRead(success=False, errors=[str(e)])
-
-
-class SubmitNewsForReview(graphene.Mutation):
-    """
-    Submit a news article for review (changes status from draft to pending)
-    """
-    class Arguments:
-        id = graphene.Int(required=True)
-
-    news = graphene.Field(NewsType)
-    success = graphene.Boolean()
-    errors = graphene.List(graphene.String)
-
-    def mutate(self, info, id):
-        user = info.context.user
-        if not user.is_authenticated:
-            return SubmitNewsForReview(success=False, errors=["Authentication required"])
-
-        try:
-            # Check if user has writer role or higher
-            profile = UserProfile.objects.get(user=user)
-            if profile.role.lower() not in ['writer', 'manager', 'admin']:
-                return SubmitNewsForReview(success=False, errors=["Permission denied. Writer role required."])
-
-            # Get the news article
-            try:
-                news = News.objects.get(id=id, author=user)
-            except News.DoesNotExist:
-                return SubmitNewsForReview(success=False, errors=["News article not found or you don't have permission to modify it"])
-
-            # Check if article is in draft status
-            if news.status != 'draft':
-                return SubmitNewsForReview(success=False, errors=["Article must be in draft status to submit for review"])
-
-            # Update status to pending
-            news.status = 'pending'
-            news.save()
-
-            # Notify managers about the submission
-            from .notification_service import NotificationService
-            NotificationService.notify_managers_of_submission(news)
-
-            return SubmitNewsForReview(news=news, success=True, errors=[])
-
-        except UserProfile.DoesNotExist:
-            return SubmitNewsForReview(success=False, errors=["User profile not found"])
-        except Exception as e:
-            return SubmitNewsForReview(success=False, errors=[str(e)])
-
-
-class CreateLikeArticle(graphene.Mutation):
-    """
-    Like a news article by the authenticated user
-    """
-
-    success = graphene.Boolean()
-    errors = graphene.String()
-
-    class Arguments:
-        article_id = graphene.ID(required=True)
-
-    def mutate(self, info, article_id):
-        try:
-            user = info.context.user
-
-            # Check user authentication
-            if user.is_anonymous:
-                return CreateLikeArticle(success=False, errors="Authentication required.")
-
-            # Check if the article exists
-            try:
-                article = News.objects.get(pk=article_id)
-            except News.DoesNotExist:
-                return CreateLikeArticle(success=False, errors="Article not found.")
-
-            # Check if already liked
-            if Like.objects.filter(user=user, article=article).exists():
-                return CreateLikeArticle(success=False, errors="You already liked this article.")
-
-            # Create like
-            Like.objects.create(user=user, article=article)
-
-            return CreateLikeArticle(success=True, errors="Article liked successfully.")
-
-        except Exception as e:
-            return CreateLikeArticle(success=False, errors="Unexpected error: " + str(e))
-
-class CreateLikeComment(graphene.Mutation):
-    """
-    Like a comment by the authenticated user
-    """
-
-    success = graphene.Boolean()
-    errors = graphene.String()
-
-    class Arguments:
-        comment_id = graphene.ID(required=True)
-
-    def mutate(self, info, comment_id):
-        try:
-            user = info.context.user
-
-            # Check user authentication
-            if user.is_anonymous:
-                return CreateLikeComment(success=False, errors="Authentication required.")
-
-            # Check if comment exists
-            try:
-                comment = Comment.objects.get(pk=comment_id)
-            except Comment.DoesNotExist:
-                return CreateLikeComment(success=False, errors="Comment not found.")
-
-            # Check if already liked
-            if Like.objects.filter(user=user, comment=comment).exists():
-                return CreateLikeComment(success=False, errors="You already liked this comment.")
-
-            # Create like
-            Like.objects.create(user=user, comment=comment)
-
-            return CreateLikeComment(success=True, errors="Comment liked successfully.")
-
-        except Exception as e:
-            return CreateLikeComment(success=False, errors="Unexpected error: " + str(e))
-
-# class UpdateLikeStatus(graphene.Mutation):
-#     """
-#     Deactivate (cancel) an existing like by setting is_active=False
-#     """
-
-#     success = graphene.Boolean()
-#     errors = graphene.List(graphene.String)
-
-#     def mutate(self, info, base64_data, folder="newsor/uploads", max_width=800, max_height=600, quality="auto", format="auto"):
-#         """
-#         Process base64 image and upload to Cloudinary
-#         """
-#         try:
-#             # Remove data URL prefix if present
-#             if base64_data.startswith('data:image'):
-#                 base64_data = base64_data.split(',')[1]
-            
-#             # Decode base64 data
-#             try:
-#                 image_data = base64.b64decode(base64_data)
-#             except Exception as e:
-#                 return UploadBase64Image(success=False, errors=[f"Invalid base64 data: {str(e)}"])
-            
-#             # Open image with PIL
-#             try:
-#                 image = Image.open(io.BytesIO(image_data))
-#             except Exception as e:
-#                 return UploadBase64Image(success=False, errors=[f"Invalid image data: {str(e)}"])
-            
-#             # Convert RGBA to RGB if necessary
-#             if image.mode == 'RGBA':
-#                 background = Image.new('RGB', image.size, (255, 255, 255))
-#                 background.paste(image, mask=image.split()[-1])
-#                 image = background
-            
-#             # Resize image if needed
-#             if image.width > max_width or image.height > max_height:
-#                 image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
-            
-#             # Convert back to bytes
-#             output = io.BytesIO()
-#             image.save(output, format='JPEG', quality=85, optimize=True)
-#             output.seek(0)
-            
-#             # Generate unique filename
-#             unique_filename = f"upload_{uuid.uuid4().hex}"
-            
-#             # Upload to Cloudinary
-#             upload_result = cloudinary.uploader.upload(
-#                 output.getvalue(),
-#                 public_id=unique_filename,
-#                 folder=folder,
-#                 transformation=[
-#                     {'quality': quality},
-#                     {'fetch_format': format}
-#                 ],
-#                 resource_type="image"
-#             )
-            
-#             # Optimize URL for storage
-#             optimized_url = CloudinaryUtils.optimize_for_storage(upload_result['secure_url'])
-            
-#             return UploadBase64Image(
-#                 url=optimized_url,
-#                 public_id=upload_result['public_id'],
-#                 success=True,
-#                 errors=[]
-#             )
-            
-#         except Exception as e:
-#             return UploadBase64Image(success=False, errors=[f"Upload failed: {str(e)}"])
-
-
-class UploadAvatarImage(graphene.Mutation):
-    """
-    Upload and set avatar image for user profile
-    """
-    class Arguments:
-        base64Data = graphene.String(required=True, description="Base64 encoded avatar image")
-
-    profile = graphene.Field(UserProfileType)
-    success = graphene.Boolean()
-    errors = graphene.List(graphene.String)
-
-    def mutate(self, info, base64Data):
-        """
-        Upload avatar and update user profile
-        """
-        user = info.context.user
-        if not user.is_authenticated:
-            return UploadAvatarImage(success=False, errors=['Authentication required'])
-
-        try:
-            # Upload the image with avatar-specific settings
-            upload_mutation = UploadBase64Image()
-            upload_result = upload_mutation.mutate(
-                info, 
-                base64Data=base64Data,
-                folder="newsor/avatars",
-                maxWidth=400,
-                maxHeight=400,
-                quality="auto",
-                format="auto"
-            )
-            
-            if not upload_result.success:
-                return UploadAvatarImage(success=False, errors=upload_result.errors)
-            
-            # Update user profile with new avatar
-            profile, created = UserProfile.objects.get_or_create(user=user)
-            profile.avatar = upload_result.url
-            profile.save()
-            
-            return UploadAvatarImage(profile=profile, success=True, errors=[])
-            
-        except Exception as e:
-            return UploadAvatarImage(success=False, errors=[f"Avatar upload failed: {str(e)}"])
-
 class CreateLikeArticle(graphene.Mutation):
     """
     Like a news article by the authenticated user
@@ -2468,8 +1987,503 @@ class CreateReadingHistory(graphene.Mutation):
 
 
 # =========================
+# Contact Mutations
+# =========================
+
+class CreateContact(graphene.Mutation):
+    """
+    Create a new contact entry
+    """
+    class Arguments:
+        name = graphene.String(required=True)
+        email = graphene.String(required=True)
+        phone = graphene.String()
+        request_service = graphene.String(required=True)
+        request_content = graphene.String(required=True)
+    
+    contact = graphene.Field(ContactType)
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+    
+    def mutate(self, info, name, email, request_service, request_content, phone=None):
+        """
+        Create contact mutation
+        """
+        try:
+            # Validate required fields
+            if not name or not email or not request_service or not request_content:
+                return CreateContact(
+                    success=False, 
+                    errors=['Name, email, request service, and request content are required'],
+                    contact=None
+                )
+            
+            # Check if this email is new (not already in database)
+            from .utils import should_send_welcome_email
+            should_send_email = should_send_welcome_email(email)
+            
+            # Create contact
+            contact = Contact.objects.create(
+                name=name,
+                email=email,
+                phone=phone or '',
+                request_service=request_service,
+                request_content=request_content,
+                status='new'
+            )
+            
+            # Send thank-you email only for new contacts (email not previously in database)
+            if should_send_email:
+                try:
+                    from .email_service import EmailService
+                    email_template = EmailService.get_default_thank_you_template()
+                    EmailService.send_thank_you_email(contact, email_template)
+                except Exception as email_error:
+                    # Log the email error but don't fail the contact creation
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to send thank-you email: {str(email_error)}")
+            else:
+                # Log that email was not sent due to existing contact
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"Thank-you email not sent to {email} - email already exists in contact database")
+            
+            return CreateContact(
+                contact=contact,
+                success=True,
+                errors=[]
+            )
+            
+        except Exception as e:
+            return CreateContact(
+                success=False,
+                errors=[str(e)],
+                contact=None
+            )
+
+
+class UpdateContactStatus(graphene.Mutation):
+    """
+    Update contact status (admin/manager only)
+    """
+    class Arguments:
+        id = graphene.Int(required=True)
+        status = graphene.String(required=True)
+    
+    contact = graphene.Field(ContactType)
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+    
+    def mutate(self, info, id, status):
+        """
+        Update contact status mutation
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return UpdateContactStatus(
+                success=False, 
+                errors=['Authentication required'],
+                contact=None
+            )
+        
+        try:
+            # Check user permissions
+            profile = UserProfile.objects.get(user=user)
+            user_role = profile.role.lower()
+            if user_role not in ["admin", "manager"]:
+                return UpdateContactStatus(
+                    success=False,
+                    errors=['Permission denied. Admin or manager role required.'],
+                    contact=None
+                )
+            
+            # Get and update contact
+            contact = Contact.objects.get(id=id)
+            
+            # Validate status
+            valid_statuses = ['new', 'in_progress', 'resolved', 'closed']
+            if status not in valid_statuses:
+                return UpdateContactStatus(
+                    success=False,
+                    errors=[f'Invalid status. Must be one of: {", ".join(valid_statuses)}'],
+                    contact=None
+                )
+            
+            contact.status = status
+            contact.save()
+            
+            return UpdateContactStatus(
+                contact=contact,
+                success=True,
+                errors=[]
+            )
+            
+        except UserProfile.DoesNotExist:
+            return UpdateContactStatus(
+                success=False,
+                errors=['User profile not found'],
+                contact=None
+            )
+        except Contact.DoesNotExist:
+            return UpdateContactStatus(
+                success=False,
+                errors=['Contact not found'],
+                contact=None
+            )
+        except Exception as e:
+            return UpdateContactStatus(
+                success=False,
+                errors=[str(e)],
+                contact=None
+            )
+
+
+class UpdateEmailTemplate(graphene.Mutation):
+    """
+    """
+    class Arguments:
+        name = graphene.String(required=True)
+        subject = graphene.String(required=True)
+        content = graphene.String(required=True)
+        variables = graphene.List(graphene.String)
+    
+    email_template = graphene.Field(EmailTemplateType)
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+    
+    def mutate(self, info, name, subject, content, variables=None):
+        """
+        Update email template mutation
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return UpdateEmailTemplate(
+                success=False,
+                errors=['Authentication required'],
+                email_template=None
+            )
+        
+        try:
+            # Check user permissions
+            profile = UserProfile.objects.get(user=user)
+            user_role = profile.role.lower()
+            if user_role not in ["admin", "manager"]:
+                return UpdateEmailTemplate(
+                    success=False,
+                    errors=['Permission denied. Admin or manager role required.'],
+                    email_template=None
+                )
+            
+            # Get or create email template
+            email_template, created = EmailTemplate.objects.get_or_create(
+                name=name,
+                defaults={
+                    'subject': subject,
+                    'content': content,
+                    'variables': variables or []
+                }
+            )
+            
+            if not created:
+                # Update existing template
+                email_template.subject = subject
+                email_template.content = content
+                email_template.variables = variables or []
+                email_template.save()
+            
+            return UpdateEmailTemplate(
+                email_template=email_template,
+                success=True,
+                errors=[]
+            )
+            
+        except UserProfile.DoesNotExist:
+            return UpdateEmailTemplate(
+                success=False,
+                errors=['User profile not found'],
+                email_template=None
+            )
+        except Exception as e:
+            return UpdateEmailTemplate(
+                success=False,
+                errors=[str(e)],
+                email_template=None
+            )
+
+
+class SendThankYouEmail(graphene.Mutation):
+    """
+    Send thank you email to a contact using a specific email template
+    """
+    class Arguments:
+        contact_id = graphene.ID(required=True)
+        template_id = graphene.ID()  # Optional: use specific template
+    
+    success = graphene.Boolean()
+    message = graphene.String()
+    errors = graphene.List(graphene.String)
+    
+    @staticmethod
+    def mutate(root, info, contact_id, template_id=None):
+        user = info.context.user
+        
+        if not user.is_authenticated:
+            return SendThankYouEmail(
+                success=False,
+                message="Authentication required",
+                errors=["You must be logged in to perform this action"]
+            )
+        
+        try:
+            # Check if user is admin
+            profile = UserProfile.objects.get(user=user)
+            user_role = profile.role.lower()
+            if user_role not in ["admin", "manager"]:
+                return SendThankYouEmail(
+                    success=False,
+                    message="Permission denied",
+                    errors=["You don't have permission to perform this action"]
+                )
+        except UserProfile.DoesNotExist:
+            return SendThankYouEmail(
+                success=False,
+                message="User profile not found",
+                errors=["User profile not found"]
+            )
+        
+        try:
+            # Get the contact
+            contact = Contact.objects.get(id=contact_id)
+            
+            # Get the email template
+            if template_id:
+                email_template = EmailTemplate.objects.get(id=template_id, is_active=True)
+            else:
+                # Use default thank you template
+                from .email_service import EmailService
+                email_template = EmailService.get_default_thank_you_template()
+            
+            # Send the email
+            from .email_service import EmailService
+            success = EmailService.send_thank_you_email(contact, email_template)
+            
+            if success:
+                return SendThankYouEmail(
+                    success=True,
+                    message=f"Thank you email sent successfully to {contact.email}",
+                    errors=[]
+                )
+            else:
+                return SendThankYouEmail(
+                    success=False,
+                    message="Failed to send email",
+                    errors=["Email delivery failed"]
+                )
+                
+        except Contact.DoesNotExist:
+            return SendThankYouEmail(
+                success=False,
+                message="Contact not found",
+                errors=["Contact with provided ID does not exist"]
+            )
+        except EmailTemplate.DoesNotExist:
+            return SendThankYouEmail(
+                success=False,
+                message="Email template not found",
+                errors=["Email template with provided ID does not exist"]
+            )
+        except Exception as e:
+            return SendThankYouEmail(
+                success=False,
+                message="An error occurred while sending email",
+                errors=[str(e)]
+            )
+
+
+# =========================
 # GraphQL Mutation Root
 # =========================
+
+# Define the SubmitNewsForReview mutation
+class SubmitNewsForReview(graphene.Mutation):
+    """
+    Submit a news article for review (writer/manager/admin only)
+    """
+    class Arguments:
+        article_id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, article_id):
+        user = info.context.user
+        if not user.is_authenticated:
+            return SubmitNewsForReview(success=False, errors=["Authentication required"])
+        try:
+            profile = UserProfile.objects.get(user=user)
+            if profile.role.lower() not in ["writer", "manager", "admin"]:
+                return SubmitNewsForReview(success=False, errors=["Permission denied."])
+            try:
+                news = News.objects.get(id=article_id, author=user)
+            except News.DoesNotExist:
+                return SubmitNewsForReview(success=False, errors=["Article not found or not owned by user."])
+            if news.status.lower() != "draft":
+                return SubmitNewsForReview(success=False, errors=["Only draft articles can be submitted for review."])
+            news.status = "pending"
+            news.save()
+            return SubmitNewsForReview(success=True, errors=[])
+        except UserProfile.DoesNotExist:
+            return SubmitNewsForReview(success=False, errors=["User profile not found"])
+        except Exception as e:
+            return SubmitNewsForReview(success=False, errors=[str(e)])
+
+# Define MarkNotificationAsRead mutation
+class MarkNotificationAsRead(graphene.Mutation):
+    """
+    Mark a notification as read for the authenticated user
+    """
+    class Arguments:
+        notification_id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, notification_id):
+        user = info.context.user
+        if not user.is_authenticated:
+            return MarkNotificationAsRead(success=False, errors=["Authentication required"])
+        try:
+            notification = Notification.objects.get(id=notification_id, recipient=user)
+            notification.is_read = True
+            notification.save()
+            return MarkNotificationAsRead(success=True, errors=[])
+        except Notification.DoesNotExist:
+            return MarkNotificationAsRead(success=False, errors=["Notification not found"])
+        except Exception as e:
+            return MarkNotificationAsRead(success=False, errors=[str(e)])
+
+# Define MarkAllNotificationsAsRead mutation
+class MarkAllNotificationsAsRead(graphene.Mutation):
+    """
+    Mark all notifications as read for the authenticated user
+    """
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info):
+        user = info.context.user
+        if not user.is_authenticated:
+            return MarkAllNotificationsAsRead(success=False, errors=["Authentication required"])
+        try:
+            Notification.objects.filter(recipient=user, is_read=False).update(is_read=True)
+            return MarkAllNotificationsAsRead(success=True, errors=[])
+        except Exception as e:
+            return MarkAllNotificationsAsRead(success=False, errors=[str(e)])
+
+# Define the UpdateNews mutation
+class UpdateNews(graphene.Mutation):
+    """
+    Update an existing news article (for writers, managers, admins)
+    """
+    class Arguments:
+        id = graphene.Int(required=True)
+        title = graphene.String()
+        content = graphene.String()
+        excerpt = graphene.String()
+        categoryId = graphene.Int()
+        tagIds = graphene.List(graphene.Int)
+        featuredImage = graphene.String()
+        metaDescription = graphene.String()
+        metaKeywords = graphene.String()
+        status = graphene.String()
+
+    news = graphene.Field(NewsType)
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, id, title=None, content=None, excerpt=None, categoryId=None, tagIds=None,
+               featuredImage=None, metaDescription=None, metaKeywords=None, status=None):
+        user = info.context.user
+        if not user.is_authenticated:
+            return UpdateNews(success=False, errors=['Authentication required'])
+
+        try:
+            news = News.objects.get(id=id)
+            profile = UserProfile.objects.get(user=user)
+            user_role = profile.role.lower()
+            # Only allow update if user is admin/manager, or the author
+            if user_role in ["admin", "manager"] or news.author == user:
+                if title is not None:
+                    news.title = title
+                if content is not None:
+                    news.content = sanitize_html_content(content)
+                if excerpt is not None:
+                    news.excerpt = excerpt
+                if categoryId is not None:
+                    try:
+                        category = Category.objects.get(id=categoryId)
+                        news.category = category
+                    except Category.DoesNotExist:
+                        return UpdateNews(success=False, errors=['Category not found'])
+                if tagIds is not None:
+                    tags = Tag.objects.filter(id__in=tagIds)
+                    news.tags.set(tags)
+                if featuredImage is not None:
+                    news.featured_image = featuredImage
+                if metaDescription is not None:
+                    news.meta_description = metaDescription
+                if metaKeywords is not None:
+                    news.meta_keywords = metaKeywords
+                if status is not None:
+                    news.status = status
+                news.save()
+                return UpdateNews(news=news, success=True, errors=[])
+            else:
+                return UpdateNews(success=False, errors=['Permission denied.'])
+        except News.DoesNotExist:
+            return UpdateNews(success=False, errors=['News article not found'])
+        except UserProfile.DoesNotExist:
+            return UpdateNews(success=False, errors=['User profile not found'])
+        except Exception as e:
+            return UpdateNews(success=False, errors=[str(e)])
+
+class UpdateNewsStatus(graphene.Mutation):
+    """
+    Update the status of a news article (publish, archive, etc.)
+    """
+    class Arguments:
+        id = graphene.Int(required=True)
+        status = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, id, status):
+        user = info.context.user
+        if not user.is_authenticated:
+            return UpdateNewsStatus(success=False, errors=["Authentication required"])
+        try:
+            news = News.objects.get(id=id)
+            profile = UserProfile.objects.get(user=user)
+            user_role = profile.role.lower()
+            # Only allow update if user is admin/manager, or the author
+            if user_role in ["admin", "manager"] or news.author == user:
+                # Only allow valid status transitions
+                valid_statuses = ["draft", "pending", "published", "archived"]
+                if status.lower() not in valid_statuses:
+                    return UpdateNewsStatus(success=False, errors=[f"Invalid status: {status}"])
+                news.status = status.lower()
+                news.save()
+                return UpdateNewsStatus(success=True, errors=[])
+            else:
+                return UpdateNewsStatus(success=False, errors=["Permission denied."])
+        except News.DoesNotExist:
+            return UpdateNewsStatus(success=False, errors=["News article not found"])
+        except UserProfile.DoesNotExist:
+            return UpdateNewsStatus(success=False, errors=["User profile not found"])
+        except Exception as e:
+            return UpdateNewsStatus(success=False, errors=[str(e)])
 
 class Mutation(graphene.ObjectType):
     """
@@ -2488,11 +2502,11 @@ class Mutation(graphene.ObjectType):
     get_cloudinary_signature = GetCloudinarySignature.Field()
     upload_base64_image = UploadBase64Image.Field()
     upload_avatar_image = UploadAvatarImage.Field()
-    upload_registration_avatar_image = UploadRegistrationAvatarImage.Field()
-    update_news_status = UpdateNewsStatus.Field()
+    # update_news_status = UpdateNewsStatus.Field()
     submit_news_for_review = SubmitNewsForReview.Field()
+    # UpdateNewsStatus mutation for updating article status (publish, archive, etc.)
+    update_news_status = UpdateNewsStatus.Field()
     update_news = UpdateNews.Field()
-    # toggle_like = ToggleLike.Field()
     mark_notification_as_read = MarkNotificationAsRead.Field()
     mark_all_notifications_as_read = MarkAllNotificationsAsRead.Field()
     create_like_article = CreateLikeArticle.Field()
@@ -2503,6 +2517,10 @@ class Mutation(graphene.ObjectType):
     delete_category = DeleteCategory.Field()
     update_tag = UpdateTag.Field()
     delete_tag = DeleteTag.Field()
+    create_contact = CreateContact.Field()
+    update_contact_status = UpdateContactStatus.Field()
+    update_email_template = UpdateEmailTemplate.Field()
+    send_thank_you_email = SendThankYouEmail.Field()
 
 
 class Subscription(graphene.ObjectType):
@@ -2518,3 +2536,14 @@ class Subscription(graphene.ObjectType):
         # This will be handled by our custom consumer
         # The subscription field is just a placeholder for the schema
         return None
+
+
+# =========================
+# GraphQL Schema Definition
+# =========================
+
+schema = graphene.Schema(
+    query=Query,
+    mutation=Mutation,
+    subscription=Subscription
+)

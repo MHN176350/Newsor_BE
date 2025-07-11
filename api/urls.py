@@ -26,6 +26,11 @@ urlpatterns = [
     path('upload-image/', views_image.upload_image, name='upload_image'),
     path('register-with-avatar/', views_image.register_user_with_avatar, name='register_with_avatar'),
     
+    # Text Configuration endpoints
+    path('text-config/', views.get_text_configuration, name='get_text_config'),
+    path('text-config/update/', views.update_text_configuration, name='update_text_config'),
+    path('text-config/reset/', views.reset_text_configuration, name='reset_text_config'),
+    
     # Include router URLs
     path('', include(router.urls)),
 ]

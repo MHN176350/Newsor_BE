@@ -370,3 +370,110 @@ class Notification(models.Model):
             self.is_read = True
             self.read_at = timezone.now()
             self.save(update_fields=['is_read', 'read_at'])
+
+
+class TextConfiguration(models.Model):
+    """
+    Stores text configuration for EvoluSoft homepage
+    """
+    key = models.CharField(max_length=100, unique=True, help_text="Text field identifier")
+    value = models.TextField(help_text="Text content")
+    description = models.CharField(max_length=255, blank=True, help_text="Description of this text field")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['key']
+        verbose_name = "Text Configuration"
+        verbose_name_plural = "Text Configurations"
+
+    def __str__(self):
+        return f"{self.key}: {self.value[:50]}..."
+
+
+class Contact(models.Model):
+    """
+    Contact form submissions from website visitors
+    """
+    STATUS_CHOICES = [
+        ('new', 'New'),
+        ('in_progress', 'In Progress'),
+        ('resolved', 'Resolved'),
+        ('closed', 'Closed'),
+    ]
+    
+    SERVICE_CHOICES = [
+        ('Consulting', 'Consulting'),
+        ('Development', 'Development'),
+        ('Marketing', 'Marketing'),
+        ('Support', 'Support'),
+    ]
+    
+    name = models.CharField(max_length=100, help_text="Contact person's name")
+    email = models.EmailField(help_text="Contact person's email")
+    phone = models.CharField(max_length=20, blank=True, null=True, help_text="Contact person's phone number")
+    request_service = models.CharField(
+        max_length=20, 
+        choices=SERVICE_CHOICES,
+        help_text="Requested service type"
+    )
+    request_content = models.TextField(help_text="Detailed request content/message")
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='new')
+    created_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(blank=True, null=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Contact"
+        verbose_name_plural = "Contacts"
+    
+    def __str__(self):
+        return f"{self.name} - {self.request_service} ({self.status})"
+
+
+class EmailTemplate(models.Model):
+    """
+    Email templates for automated responses
+    """
+    TEMPLATE_TYPE_CHOICES = [
+        ('thank_you', 'Thank You'),
+        ('welcome', 'Welcome'),
+        ('notification', 'Notification'),
+        ('reminder', 'Reminder'),
+    ]
+    
+    name = models.CharField(max_length=50, unique=True, help_text="Template identifier")
+    template_type = models.CharField(
+        max_length=20, 
+        choices=TEMPLATE_TYPE_CHOICES, 
+        default='thank_you',
+        help_text="Type of email template"
+    )
+    subject = models.CharField(max_length=200, help_text="Email subject line")
+    content = models.TextField(help_text="Email content with variable placeholders")
+    body = models.TextField(
+        blank=True,
+        help_text="Email body content (legacy field, use content instead)"
+    )
+    variables = models.JSONField(
+        default=list, 
+        blank=True,
+        help_text="Available variables for template substitution"
+    )
+    is_active = models.BooleanField(default=True, help_text="Whether this template is active")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['template_type', 'name']
+        verbose_name = "Email Template"
+        verbose_name_plural = "Email Templates"
+    
+    def __str__(self):
+        return f"{self.get_template_type_display()}: {self.subject}"
+    
+    @property
+    def body_content(self):
+        """Return body if available, otherwise content"""
+        return self.body or self.content
