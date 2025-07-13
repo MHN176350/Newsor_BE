@@ -332,10 +332,6 @@ class EmailTemplateType(DjangoObjectType):
     class Meta:
         model = EmailTemplate
         fields = ('id', 'subject', 'html_content', 'updated_at')
-    
-    def resolve_html_content(self, info):
-        """Resolve HTML content with sanitization"""
-        return sanitize_html_content(self.html_content)
 
 class Query(graphene.ObjectType):
     """
