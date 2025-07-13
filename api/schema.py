@@ -2155,8 +2155,8 @@ class SubmitNewsForReview(graphene.Mutation):
                 return SubmitNewsForReview(success=False, errors=["News article not found or you don't have permission to modify it"])
 
             # Check if article is in draft status
-            if news.status != 'draft':
-                return SubmitNewsForReview(success=False, errors=["Article must be in draft status to submit for review"])
+            if news.status != 'draft' and news.status != 'rejected':
+                return SubmitNewsForReview(success=False, errors=["Article must be in draft and rejected status to submit for review"])
 
             # Update status to pending
             news.status = 'pending'
