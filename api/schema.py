@@ -2038,6 +2038,9 @@ class CreateContact(graphene.Mutation):
                     from .email_service import EmailService
                     email_template = EmailService.get_default_thank_you_template()
                     EmailService.send_thank_you_email(contact, email_template)
+                    from .notification_service import NotificationService
+                    NotificationService.notify_admin_form_submission(contact)
+
                 except Exception as email_error:
                     # Log the email error but don't fail the contact creation
                     import logging

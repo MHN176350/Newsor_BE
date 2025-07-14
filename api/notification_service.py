@@ -150,13 +150,13 @@ class NotificationService:
         return queryset.update(is_read=True, read_at=timezone.now())
     
     @staticmethod
-    def notify_admin_form_submission(form_data):
+    def notify_admin_form_submission(contact):
         """
         Notify admin when a user submits a form for contact
         """
-        # Get all managers and admins
+        # Get all admins
         managers = User.objects.filter(
-            profile__role__in=['admin'],
+            profile__role__in=['manager', 'admin'],
             is_active=True
         )
         
@@ -165,8 +165,8 @@ class NotificationService:
             notification = Notification.objects.create(
                 recipient=manager,
                 notification_type='system',
-                title=f'New Form Submitted',
-                message=f'{form_data.name} has submitted  for contact.',
+                title='New Form Submitted',
+                message=f'{contact.name} has submitted  for contact.',
             )
             notifications_created.append(notification)
             
