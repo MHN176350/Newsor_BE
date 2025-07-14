@@ -1147,6 +1147,9 @@ class UpdateUserProfile(graphene.Mutation):
     Update user profile
     """
     class Arguments:
+        firstName = graphene.String()
+        lastName = graphene.String()
+        email = graphene.String()
         bio = graphene.String()
         phone = graphene.String()
         dateOfBirth = graphene.Date()
@@ -1156,7 +1159,7 @@ class UpdateUserProfile(graphene.Mutation):
     success = graphene.Boolean()
     errors = graphene.List(graphene.String)
 
-    def mutate(self, info, bio=None, phone=None, dateOfBirth=None, avatar=None):
+    def mutate(self, info, bio=None, phone=None, dateOfBirth=None, avatar=None, firstName=None, lastName=None, email=None):
         """
         Update user profile mutation
         """
@@ -1167,6 +1170,15 @@ class UpdateUserProfile(graphene.Mutation):
         try:
             profile = UserProfile.objects.get(user=user)
             
+            if firstName is not None:
+                profile.user.first_name = firstName
+            if lastName is not None:
+                profile.user.last_name = lastName
+            if email is not None:   
+                # Check if email already exists for another user
+                if User.objects.filter(email=email).exclude(id=user.id).exists():
+                    return UpdateUserProfile(success=False, errors=['Email already exists'])
+                profile.user.email = email
             if bio is not None:
                 profile.bio = bio
             if phone is not None:
@@ -1175,7 +1187,8 @@ class UpdateUserProfile(graphene.Mutation):
                 profile.date_of_birth = dateOfBirth
             if avatar is not None:
                 profile.avatar = avatar
-                
+            
+            profile.user.save()  # Save user changes
             profile.save()
             
             return UpdateUserProfile(profile=profile, success=True, errors=[])
