@@ -1,7 +1,8 @@
 from django.contrib import admin
 from .models import (
     Category, Tag, UserProfile, News, Comment, 
-    Like, ReadingHistory, NewsletterSubscription
+    Like, ReadingHistory, NewsletterSubscription,
+    Contact, EmailTemplate, Notification, TextConfiguration
 )
 
 
@@ -82,3 +83,66 @@ class NewsletterSubscriptionAdmin(admin.ModelAdmin):
     list_display = ['email', 'user', 'is_active', 'created_at']
     list_filter = ['is_active', 'created_at']
     search_fields = ['email']
+
+
+@admin.register(Contact)
+class ContactAdmin(admin.ModelAdmin):
+    list_display = ['name', 'email', 'request_service', 'status', 'created_at', 'responded_at']
+    list_filter = ['status', 'request_service', 'created_at']
+    search_fields = ['name', 'email', 'request_content']
+    readonly_fields = ['created_at']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Contact Information', {
+            'fields': ('name', 'email', 'phone')
+        }),
+        ('Request Details', {
+            'fields': ('request_service', 'request_content')
+        }),
+        ('Status & Management', {
+            'fields': ('status', 'responded_at', 'created_at')
+        }),
+    )
+
+
+@admin.register(EmailTemplate)
+class EmailTemplateAdmin(admin.ModelAdmin):
+    list_display = ['name', 'template_type', 'subject', 'is_active', 'created_at', 'updated_at']
+    list_filter = ['template_type', 'is_active', 'created_at']
+    search_fields = ['name', 'subject', 'content']
+    readonly_fields = ['created_at', 'updated_at']
+    
+    fieldsets = (
+        ('Template Information', {
+            'fields': ('name', 'template_type', 'is_active')
+        }),
+        ('Email Content', {
+            'fields': ('subject', 'content')
+        }),
+        ('Variables & Legacy', {
+            'fields': ('variables', 'body'),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ['recipient', 'notification_type', 'title', 'is_read', 'created_at']
+    list_filter = ['notification_type', 'is_read', 'created_at']
+    search_fields = ['title', 'message', 'recipient__username']
+    readonly_fields = ['created_at', 'updated_at', 'read_at']
+    date_hierarchy = 'created_at'
+
+
+@admin.register(TextConfiguration)
+class TextConfigurationAdmin(admin.ModelAdmin):
+    list_display = ['key', 'description', 'is_active', 'updated_at']
+    list_filter = ['is_active', 'created_at']
+    search_fields = ['key', 'value', 'description']
+    readonly_fields = ['created_at', 'updated_at']

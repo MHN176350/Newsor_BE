@@ -2212,6 +2212,144 @@ class UpdateEmailTemplate(graphene.Mutation):
             )
 
 
+class CreateEmailTemplate(graphene.Mutation):
+    """
+    Create a new email template (admin/manager only)
+    """
+    class Arguments:
+        name = graphene.String(required=True)
+        subject = graphene.String(required=True)
+        content = graphene.String(required=True)
+        variables = graphene.List(graphene.String)
+    
+    email_template = graphene.Field(EmailTemplateType)
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+    
+    def mutate(self, info, name, subject, content, variables=None):
+        """
+        Create email template mutation
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return CreateEmailTemplate(
+                success=False,
+                errors=['Authentication required'],
+                email_template=None
+            )
+        
+        try:
+            # Check user permissions
+            profile = UserProfile.objects.get(user=user)
+            user_role = profile.role.lower()
+            if user_role not in ["admin", "manager"]:
+                return CreateEmailTemplate(
+                    success=False,
+                    errors=['Permission denied. Admin or manager role required.'],
+                    email_template=None
+                )
+            
+            # Check if template with this name already exists
+            if EmailTemplate.objects.filter(name=name).exists():
+                return CreateEmailTemplate(
+                    success=False,
+                    errors=[f'Email template with name "{name}" already exists'],
+                    email_template=None
+                )
+            
+            # Create new email template
+            email_template = EmailTemplate.objects.create(
+                name=name,
+                subject=subject,
+                content=content,
+                variables=variables or []
+            )
+            
+            return CreateEmailTemplate(
+                email_template=email_template,
+                success=True,
+                errors=[]
+            )
+            
+        except UserProfile.DoesNotExist:
+            return CreateEmailTemplate(
+                success=False,
+                errors=['User profile not found'],
+                email_template=None
+            )
+        except Exception as e:
+            return CreateEmailTemplate(
+                success=False,
+                errors=[str(e)],
+                email_template=None
+            )
+
+
+class DeleteEmailTemplate(graphene.Mutation):
+    """
+    Delete an email template (admin/manager only)
+    """
+    class Arguments:
+        id = graphene.ID(required=True)
+    
+    success = graphene.Boolean()
+    errors = graphene.List(graphene.String)
+    
+    def mutate(self, info, id):
+        """
+        Delete email template mutation
+        """
+        user = info.context.user
+        if not user.is_authenticated:
+            return DeleteEmailTemplate(
+                success=False,
+                errors=['Authentication required']
+            )
+        
+        try:
+            # Check user permissions
+            profile = UserProfile.objects.get(user=user)
+            user_role = profile.role.lower()
+            if user_role not in ["admin", "manager"]:
+                return DeleteEmailTemplate(
+                    success=False,
+                    errors=['Permission denied. Admin or manager role required.']
+                )
+            
+            # Get and delete email template
+            email_template = EmailTemplate.objects.get(id=id)
+            
+            # Prevent deletion of default templates
+            if email_template.name == 'default_thank_you':
+                return DeleteEmailTemplate(
+                    success=False,
+                    errors=['Cannot delete default email template']
+                )
+            
+            email_template.delete()
+            
+            return DeleteEmailTemplate(
+                success=True,
+                errors=[]
+            )
+            
+        except UserProfile.DoesNotExist:
+            return DeleteEmailTemplate(
+                success=False,
+                errors=['User profile not found']
+            )
+        except EmailTemplate.DoesNotExist:
+            return DeleteEmailTemplate(
+                success=False,
+                errors=['Email template not found']
+            )
+        except Exception as e:
+            return DeleteEmailTemplate(
+                success=False,
+                errors=[str(e)]
+            )
+
+
 class SendThankYouEmail(graphene.Mutation):
     """
     Send thank you email to a contact using a specific email template
@@ -2389,6 +2527,7 @@ class UpdateNews(graphene.Mutation):
     class Arguments:
         id = graphene.Int(required=True)
         title = graphene.String()
+
         content = graphene.String()
         excerpt = graphene.String()
         categoryId = graphene.Int()
@@ -2520,6 +2659,8 @@ class Mutation(graphene.ObjectType):
     create_contact = CreateContact.Field()
     update_contact_status = UpdateContactStatus.Field()
     update_email_template = UpdateEmailTemplate.Field()
+    create_email_template = CreateEmailTemplate.Field()
+    delete_email_template = DeleteEmailTemplate.Field()
     send_thank_you_email = SendThankYouEmail.Field()
 
 
