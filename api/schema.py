@@ -9,6 +9,7 @@ from .models import (
 from .utils import sanitize_html_content, get_cloudinary_upload_signature
 import base64
 import io
+import logging
 from PIL import Image
 import cloudinary.uploader
 import uuid
@@ -2640,6 +2641,335 @@ class UpdateNewsStatus(graphene.Mutation):
         except Exception as e:
             return UpdateNewsStatus(success=False, errors=[str(e)])
 
+class RequestPasswordReset(graphene.Mutation):
+    """
+    Request password reset - sends email with reset token
+    """
+    class Arguments:
+        email = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    message = graphene.String()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, email):
+        """
+        Request password reset mutation
+        """
+        from django.core.mail import send_mail
+        from django.conf import settings
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.http import urlsafe_base64_encode
+        from django.utils.encoding import force_bytes
+
+        logger = logging.getLogger(__name__)
+
+        try:
+            # Validate email format
+            if not email or '@' not in email:
+                return RequestPasswordReset(
+                    success=False,
+                    message="Please provide a valid email address.",
+                    errors=["Invalid email format"]
+                )
+
+            # Check if user exists
+            try:
+                user = User.objects.get(email=email)
+                logger.info(f"Password reset requested for user: {user.username}")
+            except User.DoesNotExist:
+                logger.warning(f"Password reset requested for non-existent email: {email}")
+                # Don't reveal that the user doesn't exist for security
+                return RequestPasswordReset(
+                    success=True, 
+                    message="If an account with this email exists, you will receive a password reset email.",
+                    errors=[]
+                )
+
+            # Generate token and UID
+            try:
+                token = default_token_generator.make_token(user)
+                uid = urlsafe_base64_encode(force_bytes(user.pk))
+                
+                logger.info(f"Generated reset token for user {user.username}: uid={uid}, token_length={len(token)}")
+                
+                # Validate that UID and token were generated correctly
+                if not uid or not token:
+                    raise Exception("Failed to generate reset token or UID")
+                    
+            except Exception as e:
+                logger.error(f"Error generating reset token: {e}")
+                return RequestPasswordReset(
+                    success=False,
+                    message="Error generating reset link. Please try again.",
+                    errors=["Token generation failed"]
+                )
+            
+            # Create reset URL
+            reset_url = f"{settings.FRONTEND_URL}/reset-password/{uid}/{token}/"
+            logger.info(f"Reset URL generated: {reset_url}")
+            
+            # Email content
+            subject = "Password Reset Request - Newsor Admin"
+            message = f"""
+Dear {user.first_name or user.username},
+
+You have requested to reset your password for your Newsor Admin account.
+
+Please click the link below to reset your password:
+{reset_url}
+
+This link will expire in 15 minutes for security reasons.
+
+If you did not request this password reset, please ignore this email.
+
+Best regards,
+The Newsor Team
+            """
+            
+            # Send email
+            try:
+                send_mail(
+                    subject,
+                    message,
+                    settings.DEFAULT_FROM_EMAIL,
+                    [email],
+                    fail_silently=False,
+                )
+                logger.info(f"Password reset email sent to: {email}")
+            except Exception as e:
+                logger.error(f"Error sending password reset email: {e}")
+                return RequestPasswordReset(
+                    success=False,
+                    message="Error sending reset email. Please try again.",
+                    errors=["Email sending failed"]
+                )
+            
+            return RequestPasswordReset(
+                success=True,
+                message="If an account with this email exists, you will receive a password reset email.",
+                errors=[]
+            )
+            
+        except Exception as e:
+            logger.error(f"Unexpected error in password reset request: {e}")
+            return RequestPasswordReset(
+                success=False,
+                message="An error occurred while processing your request.",
+                errors=[f"System error: {str(e)}"]
+            )
+
+
+class ResetPassword(graphene.Mutation):
+    """
+    Reset password using token from email
+    """
+    class Arguments:
+        uid = graphene.String(required=True)
+        token = graphene.String(required=True)
+        username = graphene.String(required=True)
+        newPassword = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    message = graphene.String()
+    errors = graphene.List(graphene.String)
+
+    def mutate(self, info, uid, token, username, newPassword):
+        """
+        Reset password mutation
+        """
+        from django.utils.http import urlsafe_base64_decode
+        from django.utils.encoding import force_str
+
+        logger = logging.getLogger(__name__)
+
+        # Log the raw input values to check for stringification issues
+        logger.info(f"Raw mutation inputs:")
+        logger.info(f"  uid: '{uid}' (type: {type(uid).__name__}, length: {len(uid)})")
+        logger.info(f"  token: '{token}' (type: {type(token).__name__}, length: {len(token)})")
+        logger.info(f"  username: '{username}' (type: {type(username).__name__})")
+        
+        # Check for potential stringification issues
+        if uid.startswith('"') and uid.endswith('"'):
+            logger.warning("UID appears to be JSON stringified - removing quotes")
+            uid = uid[1:-1]  # Remove surrounding quotes
+            
+        if token.startswith('"') and token.endswith('"'):
+            logger.warning("Token appears to be JSON stringified - removing quotes")
+            token = token[1:-1]  # Remove surrounding quotes
+            
+        if username.startswith('"') and username.endswith('"'):
+            logger.warning("Username appears to be JSON stringified - removing quotes")
+            username = username[1:-1]  # Remove surrounding quotes
+
+        try:
+            # Decode user ID
+            try:
+                # Ensure uid is properly formatted
+                if not uid:
+                    return ResetPassword(
+                        success=False,
+                        message="Invalid reset link - missing user ID.",
+                        errors=["Missing UID"]
+                    )
+                
+                # Decode the base64 encoded user ID
+                user_id = force_str(urlsafe_base64_decode(uid))
+                logger.info(f"Decoded user ID: {user_id}")
+                
+                # Get the user
+                user = User.objects.get(pk=user_id)
+                logger.info(f"Found user: {user.username}")
+                
+            except (TypeError, ValueError, OverflowError) as e:
+                logger.error(f"Error decoding UID: {e}")
+                return ResetPassword(
+                    success=False,
+                    message="Invalid reset link - corrupted user ID.",
+                    errors=["Invalid UID format"]
+                )
+            except User.DoesNotExist:
+                logger.error(f"User not found for ID: {user_id}")
+                return ResetPassword(
+                    success=False,
+                    message="Invalid reset link - user not found.",
+                    errors=["User not found"]
+                )
+
+            # Verify username matches
+            if user.username != username:
+                logger.warning(f"Username mismatch: expected {user.username}, got {username}")
+                return ResetPassword(
+                    success=False,
+                    message="Username does not match the reset request.",
+                    errors=["Username mismatch"]
+                )
+
+            # Check if token is valid
+            try:
+                if not token:
+                    return ResetPassword(
+                        success=False,
+                        message="Invalid reset link - missing token.",
+                        errors=["Missing token"]
+                    )
+                
+                logger.info(f"About to validate token for user {user.username}")
+                logger.info(f"Token: {token[:10]}...")  # Log only first 10 chars for security
+                
+                # Import token generator fresh to avoid any import issues
+                from django.contrib.auth.tokens import default_token_generator as token_gen
+                
+                # Validate the token with detailed error catching
+                try:
+                    is_valid = token_gen.check_token(user, token)
+                    logger.info(f"Token validation completed. Result: {is_valid}")
+                except Exception as token_error:
+                    logger.error(f"Token validation internal error: {token_error}")
+                    logger.error(f"Token error type: {type(token_error).__name__}")
+                    return ResetPassword(
+                        success=False,
+                        message=f"Token validation failed with error: {str(token_error)}",
+                        errors=[f"Token validation error: {type(token_error).__name__}: {str(token_error)}"]
+                    )
+                
+                if not is_valid:
+                    logger.warning(f"Token validation returned False for user {user.username}")
+                    return ResetPassword(
+                        success=False,
+                        message="Invalid or expired reset link. Please request a new password reset.",
+                        errors=["Invalid or expired token"]
+                    )
+                    
+            except Exception as e:
+                logger.error(f"Token validation outer error: {e}")
+                logger.error(f"Token error type: {type(e).__name__}")
+                return ResetPassword(
+                    success=False,
+                    message=f"Error validating reset token: {str(e)}",
+                    errors=[f"Token validation failed: {type(e).__name__}: {str(e)}"]
+                )
+
+            # Validate new password
+            if not newPassword or len(newPassword) < 8:
+                return ResetPassword(
+                    success=False,
+                    message="Password must be at least 8 characters long.",
+                    errors=["Password too short"]
+                )
+
+            # Set new password
+            user.set_password(newPassword)
+            user.save()
+            
+            logger.info(f"Password reset successful for user: {user.username}")
+
+            return ResetPassword(
+                success=True,
+                message="Password has been reset successfully. You can now login with your new password.",
+                errors=[]
+            )
+
+        except Exception as e:
+            logger.error(f"Unexpected error in password reset: {e}")
+            return ResetPassword(
+                success=False,
+                message="An error occurred while resetting your password. Please try again.",
+                errors=[f"System error: {str(e)}"]
+            )
+
+class TestTokenValidation(graphene.Mutation):
+    """
+    Test mutation to validate token generation and decoding - for debugging only
+    """
+    class Arguments:
+        uid = graphene.String(required=True)
+        token = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    message = graphene.String()
+    user_id = graphene.String()
+    username = graphene.String()
+    token_valid = graphene.Boolean()
+
+    def mutate(self, info, uid, token):
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.http import urlsafe_base64_decode
+        from django.utils.encoding import force_str
+
+        try:
+            # Test UID decoding
+            try:
+                user_id = force_str(urlsafe_base64_decode(uid))
+                user = User.objects.get(pk=user_id)
+                
+                # Test token validation
+                token_valid = default_token_generator.check_token(user, token)
+                
+                return TestTokenValidation(
+                    success=True,
+                    message=f"UID decoded successfully. Token valid: {token_valid}",
+                    user_id=str(user_id),
+                    username=user.username,
+                    token_valid=token_valid
+                )
+            except Exception as e:
+                return TestTokenValidation(
+                    success=False,
+                    message=f"Error: {str(e)}",
+                    user_id="",
+                    username="",
+                    token_valid=False
+                )
+        except Exception as e:
+            return TestTokenValidation(
+                success=False,
+                message=f"System error: {str(e)}",
+                user_id="",
+                username="",
+                token_valid=False
+            )
+
 class Mutation(graphene.ObjectType):
     """
     API GraphQL Mutations
@@ -2678,6 +3008,8 @@ class Mutation(graphene.ObjectType):
     create_email_template = CreateEmailTemplate.Field()
     delete_email_template = DeleteEmailTemplate.Field()
     send_thank_you_email = SendThankYouEmail.Field()
+    request_password_reset = RequestPasswordReset.Field()
+    reset_password = ResetPassword.Field()
 
 
 class Subscription(graphene.ObjectType):
