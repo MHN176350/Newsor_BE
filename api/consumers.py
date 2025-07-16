@@ -15,7 +15,6 @@ class GraphQLSubscriptionConsumer(AsyncWebsocketConsumer):
     """
     
     async def connect(self):
-        print(f"WebSocket connection attempt from {self.scope.get('client', ['unknown', 'unknown'])[0]}")
         
         # Get token from connection params or headers
         token = None
@@ -69,20 +68,31 @@ class GraphQLSubscriptionConsumer(AsyncWebsocketConsumer):
             self.group_name = f'notifications_{self.user.id}'
         else:
             self.group_name = 'notifications_anonymous'
-            
         await self.channel_layer.group_add(
             self.group_name,
             self.channel_name
         )
         
-        print("Accepting WebSocket connection with subprotocol: graphql-ws")
-        await self.accept(subprotocol='graphql-ws')
+        subprotocols = self.scope.get('subprotocols', [])
+        if 'graphql-transport-ws' in subprotocols:
+            chosen_subprotocol = 'graphql-transport-ws'
+        elif 'graphql-ws' in subprotocols:
+            chosen_subprotocol = 'graphql-ws'
+        else:
+            chosen_subprotocol = None
+
+        if chosen_subprotocol:
+            await self.accept(subprotocol=chosen_subprotocol)
+        else:
+            print("No supported subprotocol found, closing connection")
+            await self.close()
+            return
+
         
         # Send connection ack
         await self.send(text_data=json.dumps({
             'type': 'connection_ack'
         }))
-        print("WebSocket connection established and ack sent")
         
     async def disconnect(self, close_code):
         if hasattr(self, 'group_name'):
@@ -93,45 +103,45 @@ class GraphQLSubscriptionConsumer(AsyncWebsocketConsumer):
             )
     
     async def receive(self, text_data):
-        """Handle incoming messages from client"""
+        """Handle incoming messages from client (graphql-transport-ws)"""
         try:
             message = json.loads(text_data)
             message_type = message.get('type')
-            
-            if message_type == 'start':
-                # Client starting a subscription
+            if message_type == 'connection_init':
+                # Optional: you can respond with connection_ack here too (if not already done in connect())
+                await self.send(text_data=json.dumps({'type': 'connection_ack'}))
+            elif message_type == 'subscribe':
                 payload = message.get('payload', {})
                 query = payload.get('query', '')
-                
                 # Check if it's a notification subscription
                 if 'notificationAdded' in query:
-                    # Store subscription ID for this connection
                     self.subscription_id = message.get('id')
-                    
-                    # Send immediate response that subscription is active
+                    # Optionally send dummy initial payload
                     await self.send(text_data=json.dumps({
                         'id': self.subscription_id,
-                        'type': 'data',
+                        'type': 'next',
                         'payload': {
                             'data': {
                                 'notificationAdded': None
                             }
                         }
                     }))
-                    
-            elif message_type == 'stop':
-                # Client stopping a subscription
+
+            elif message_type == 'complete':
+                print(f"❌ Subscription complete for ID: {message.get('id')}")
                 self.subscription_id = None
-                
+
         except json.JSONDecodeError:
-            pass
-    
+            print("❗ JSON decode error in WebSocket receive()")
+
+
     async def notification_message(self, event):
-        """Handle notification messages from group"""
+
+        """Send notification to subscribed client"""
         if hasattr(self, 'subscription_id') and self.subscription_id:
             await self.send(text_data=json.dumps({
+                'type': 'next',
                 'id': self.subscription_id,
-                'type': 'data',
                 'payload': {
                     'data': {
                         'notificationAdded': event['notification']

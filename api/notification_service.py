@@ -191,7 +191,7 @@ class NotificationService:
             }
             
             # Send to user's group
-            group_name = f'notifications_{user_id}'
+            group_name = f'notifications_anonymous'  # Use anonymous group for admin notifications| line 70 consumers.py
             async_to_sync(channel_layer.group_send)(
                 group_name,
                 {
