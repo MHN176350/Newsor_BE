@@ -22,8 +22,6 @@ else:
     print('Superuser already exists');
 "
 
-echo "Populating sample data..."
-python manage.py populate_sample_data
 
 echo "Updating email templates..."
 if python update_email_template.py; then

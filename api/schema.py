@@ -71,7 +71,7 @@ class UserType(DjangoObjectType):
         fields = ('id', 'username', 'email', 'first_name', 'last_name', 'is_active', 'date_joined', 'last_login')
 
     def resolve_profile(self, info):
-        """
+        """                                                                            
         Resolve user profile
         """
         try:
@@ -135,7 +135,7 @@ class UserProfileType(DjangoObjectType):
         if avatar_url:
             return avatar_url
         else:
-            # Return default avatar if no avatar is set
+           
             return "/static/images/default-avatar.svg"
     
     def resolve_has_write_permission(self, info):
@@ -1097,13 +1097,14 @@ class CreateUser(graphene.Mutation):
                 email=email,
                 password=password,
                 first_name=first_name or '',
-                last_name=last_name or ''
+                last_name=last_name or '',
+            
             )
             
             # Create user profile with avatar if provided
             profile_data = {
                 'user': user,
-                'role': 'reader',
+                'role': 'manager',
                 'is_verified': False
             }
             
