@@ -784,7 +784,7 @@ class Query(graphene.ObjectType):
         
         try:
             profile = UserProfile.objects.get(user=user)
-            if profile.role.lower() != 'admin':
+            if profile.role.lower() != 'admin' and profile.role.lower() != 'manager':
                 return []
         except UserProfile.DoesNotExist:
             return []
