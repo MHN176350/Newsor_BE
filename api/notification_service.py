@@ -171,12 +171,12 @@ class NotificationService:
             notifications_created.append(notification)
             
             # Send real-time notification
-            NotificationService._send_realtime_notification_admin(manager.id, notification)
+            NotificationService._send_realtime_notification_admin(manager.username, notification)
         
         return notifications_created
     
     @staticmethod
-    def _send_realtime_notification_admin(user_id, notification):
+    def _send_realtime_notification_admin(username, notification):
         """
         Send real-time notification via WebSocket
         """
@@ -191,7 +191,7 @@ class NotificationService:
             }
             
             # Send to user's group
-            group_name = f'notifications_anonymous'  # Use anonymous group for admin notifications| line 70 consumers.py
+            group_name = f'notifications_{username}'
             async_to_sync(channel_layer.group_send)(
                 group_name,
                 {

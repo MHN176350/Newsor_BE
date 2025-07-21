@@ -1539,12 +1539,19 @@ class ToggleTag(graphene.Mutation):
 
             # If tag is being deactivated, archive all articles with this tag
             if not tag.is_active:
-                articles_with_tag = News.objects.filter(tags=tag, status__in=['published', 'draft', 'pending'])
+                articles_with_tag = News.objects.filter(tags=tag, status__in=['published'])
                 for article in articles_with_tag:
                     article.status = 'archived'
                     article.save()
+                return ToggleTag(tag=tag, success=True, errors=[])
 
-            return ToggleTag(tag=tag, success=True, errors=[])
+                
+            if tag.is_active:
+                articles_with_tag = News.objects.filter(tags=tag, status__in=['archived'])
+                for article in articles_with_tag:
+                    article.status = 'published'
+                    article.save()
+                return ToggleTag(tag=tag, success=True, errors=[])
 
         except Exception as e:
             return ToggleTag(success=False, errors=[str(e)])
