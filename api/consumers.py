@@ -24,6 +24,20 @@ class GraphQLSubscriptionConsumer(AsyncWebsocketConsumer):
         super().__init__(*args, **kwargs)
         self.user = None
         self.groups = []
+        self.connection_established = False
+    
+    async def safe_send(self, message):
+        """Safely send a message, handling connection state."""
+        try:
+            if hasattr(self, 'channel_name') and self.channel_name and self.connection_established:
+                await self.send(text_data=json.dumps(message))
+                return True
+            else:
+                logger.warning("Attempted to send message before connection established")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to send message: {e}")
+            return False
     
     async def connect(self):
         """Handle WebSocket connection."""
@@ -33,8 +47,9 @@ class GraphQLSubscriptionConsumer(AsyncWebsocketConsumer):
             # Extract user authentication
             self.user = await self.get_user_from_token()
             
-            # Accept the connection
+            # Accept the connection FIRST - this is critical!
             await self.accept(subprotocol='graphql-ws')
+            self.connection_established = True
             
             # Join user-specific group if authenticated
             if self.user and not self.user.is_anonymous:
@@ -49,22 +64,28 @@ class GraphQLSubscriptionConsumer(AsyncWebsocketConsumer):
                 self.groups.append(group_name)
                 logger.info("Anonymous user connected to WebSocket")
             
-            # Send connection acknowledgment
-            await self.send(text_data=json.dumps({
+            # Send connection acknowledgment AFTER accepting using safe send
+            await self.safe_send({
                 'type': 'connection_ack',
                 'payload': {
                     'message': 'Connected successfully',
                     'authenticated': not self.user.is_anonymous if self.user else False
                 }
-            }))
+            })
             
         except Exception as e:
             logger.error(f"WebSocket connection error: {e}")
-            await self.close(code=4000)
+            # Don't try to close if we haven't accepted yet
+            try:
+                await self.close(code=4000)
+            except Exception:
+                pass
     
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection."""
         try:
+            self.connection_established = False
+            
             # Leave all groups
             for group_name in self.groups:
                 await self.channel_layer.group_discard(group_name, self.channel_name)
@@ -92,22 +113,22 @@ class GraphQLSubscriptionConsumer(AsyncWebsocketConsumer):
                 await self.handle_connection_init(data)
             elif message_type == 'ping':
                 # Handle ping for keep-alive
-                await self.send(text_data=json.dumps({'type': 'pong'}))
+                await self.safe_send({'type': 'pong'})
             else:
                 logger.warning(f"Unknown message type: {message_type}")
                 
         except json.JSONDecodeError:
             logger.error("Invalid JSON received")
-            await self.send(text_data=json.dumps({
+            await self.safe_send({
                 'type': 'error',
                 'payload': {'message': 'Invalid JSON format'}
-            }))
+            })
         except Exception as e:
             logger.error(f"Error handling WebSocket message: {e}")
-            await self.send(text_data=json.dumps({
+            await self.safe_send({
                 'type': 'error',
                 'payload': {'message': 'Internal server error'}
-            }))
+            })
     
     async def handle_connection_init(self, data):
         """Handle connection initialization with authentication."""
@@ -134,20 +155,20 @@ class GraphQLSubscriptionConsumer(AsyncWebsocketConsumer):
                     await self.channel_layer.group_add(group_name, self.channel_name)
                     self.groups.append(group_name)
             
-            # Send connection acknowledgment
-            await self.send(text_data=json.dumps({
+            # Send connection acknowledgment - only if connection is established
+            await self.safe_send({
                 'type': 'connection_ack',
                 'payload': {
                     'authenticated': not self.user.is_anonymous if self.user else False
                 }
-            }))
+            })
             
         except Exception as e:
             logger.error(f"Connection init error: {e}")
-            await self.send(text_data=json.dumps({
+            await self.safe_send({
                 'type': 'connection_error',
                 'payload': {'message': 'Authentication failed'}
-            }))
+            })
     
     async def handle_subscription_start(self, data):
         """Handle GraphQL subscription start."""
@@ -157,7 +178,7 @@ class GraphQLSubscriptionConsumer(AsyncWebsocketConsumer):
             
             # For now, just acknowledge the subscription
             # In a full implementation, you'd parse and execute the GraphQL subscription
-            await self.send(text_data=json.dumps({
+            await self.safe_send({
                 'type': 'data',
                 'id': subscription_id,
                 'payload': {
@@ -165,7 +186,7 @@ class GraphQLSubscriptionConsumer(AsyncWebsocketConsumer):
                         'message': 'Subscription started successfully'
                     }
                 }
-            }))
+            })
             
         except Exception as e:
             logger.error(f"Subscription start error: {e}")
@@ -173,10 +194,10 @@ class GraphQLSubscriptionConsumer(AsyncWebsocketConsumer):
     async def handle_subscription_stop(self, data):
         """Handle subscription stop."""
         subscription_id = data.get('id')
-        await self.send(text_data=json.dumps({
+        await self.safe_send({
             'type': 'complete',
             'id': subscription_id
-        }))
+        })
     
     async def get_user_from_token(self):
         """Extract and authenticate user from WebSocket connection."""
