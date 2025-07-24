@@ -47,6 +47,7 @@ def start_server(port=8000):
         print(f"🚀 Starting Django server with WebSocket support on port {port}...")
         print(f"📡 HTTP: http://localhost:{port}/")
         print(f"🔌 WebSocket: ws://localhost:{port}/graphql/")
+        print(f"🌐 Network WebSocket: ws://192.168.1.36:{port}/graphql/")
         print(f"📊 GraphQL Playground: http://localhost:{port}/graphql/")
         print("🛑 Press Ctrl+C to stop the server")
         print("=" * 60)
@@ -62,6 +63,8 @@ def start_server(port=8000):
                 sys.executable, "-m", "daphne",
                 "-p", str(port),
                 "-b", "0.0.0.0",
+                "-v", "2",  # Verbose logging for debugging WebSocket issues
+                "--access-log", "-",  # Log access requests
                 "newsor.asgi:application"
             ]
         else:
@@ -71,6 +74,7 @@ def start_server(port=8000):
                 "-p", str(port),
                 "-b", "0.0.0.0",
                 "-v", "2",  # Verbose logging for development
+                "--access-log", "-",  # Log access requests
                 "newsor.asgi:application"
             ]
         
