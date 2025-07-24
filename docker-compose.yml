@@ -35,7 +35,7 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "0.0.0.0:8000:8000"  # Bind to all interfaces for network access
     env_file:
       - .env
     environment:

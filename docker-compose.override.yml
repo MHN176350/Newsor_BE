@@ -15,15 +15,15 @@ services:
       - /app/node_modules
       - /app/__pycache__
     ports:
-      - "8000:8000"
+      - "0.0.0.0:8000:8000"  # Bind to all network interfaces
     command: python start_server.py
     
   db:
     # Expose database port for external connections during development
     ports:
-      - "5432:5432"
+      - "0.0.0.0:5432:5432"
     
   redis:
     # Expose Redis port for external connections during development
     ports:
-      - "6379:6379"
+      - "0.0.0.0:6379:6379"
