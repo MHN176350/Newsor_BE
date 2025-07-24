@@ -21,9 +21,9 @@ services:
   db:
     # Expose database port for external connections during development
     ports:
-      - "0.0.0.0:5432:5432"
+      - "5432:5432"  # Use 5433 to avoid conflicts
     
   redis:
     # Expose Redis port for external connections during development
     ports:
-      - "0.0.0.0:6379:6379"
+      - "6379:6379"  # Use 6380 to avoid conflicts

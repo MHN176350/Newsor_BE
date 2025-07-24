@@ -8,10 +8,8 @@ services:
       POSTGRES_DB: ${DATABASE_NAME:-newsor_db}
       POSTGRES_USER: ${DATABASE_USER:-newsor_user}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-newsor_password}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
     ports:
-      - "${DATABASE_PORT:-5432}:5432"
+      - "5433:5432"  # Changed to 5433 to avoid conflict with local PostgreSQL
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-newsor_user} -d ${DATABASE_NAME:-newsor_db}"]
       interval: 10s
@@ -22,9 +20,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
+      - "6380:6379"  # Changed to 6380 to avoid conflict with local Redis
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -61,7 +57,3 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-
-volumes:
-  postgres_data:
-  redis_data:
