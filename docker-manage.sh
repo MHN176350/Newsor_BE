@@ -1,30 +1,59 @@
 #!/bin/bash
 
-# Docker Environment Management Script for Newsor
+# Docker Environment Management Script for Newsor Backend
+# Updated to work with start_server.py WebSocket configuration
 
 case "$1" in
-    "docker-up")
-        echo "🐳 Starting Newsor with Docker (PostgreSQL + Redis containers)..."
-        cp .env.docker .env 2>/dev/null || echo "Using current .env file"
-        docker-compose up --build
+    "docker-up"|"dev")
+        echo "🐳 Starting Newsor with Docker (Development with WebSocket support)..."
+        echo "📦 Using start_server.py for enhanced WebSocket handling..."
+        docker-compose -f docker-compose.yml -f docker-compose.override.yml up --build
         ;;
-    "docker-down")
+    "prod")
+        echo "🚀 Starting Newsor in Production mode..."
+        docker-compose -f docker-compose.yml up --build -d
+        ;;
+    "docker-down"|"stop")
         echo "🛑 Stopping Docker containers..."
         docker-compose down
         ;;
-    "docker-clean")
+    "docker-clean"|"clean")
         echo "🧹 Cleaning up Docker containers and volumes..."
         docker-compose down -v
         docker system prune -f
         ;;
-    "local")
-        echo "💻 Switching to local development environment..."
-        cp .env.local .env
-        echo "Environment switched to local. Start your local PostgreSQL and Redis services."
+    "build")
+        echo "🔨 Building Docker containers..."
+        docker-compose build --no-cache
         ;;
-    "docker-env")
-        echo "🐳 Switching to Docker environment..."
-        cp .env.docker .env 2>/dev/null || echo "Docker .env file not found, using current .env"
+    "logs")
+        echo "� Showing Docker logs..."
+        if [ -n "$2" ]; then
+            docker-compose logs -f "$2"
+        else
+            docker-compose logs -f
+        fi
+        ;;
+    "shell")
+        echo "🐚 Opening shell in web container..."
+        docker-compose exec web bash
+        ;;
+    "test")
+        echo "🧪 Running tests in Docker..."
+        docker-compose exec web python manage.py test
+        ;;
+    "test-websocket")
+        echo "🔌 Testing WebSocket connection..."
+        docker-compose exec web python test_websocket.py
+        ;;
+    "redis-test")
+        echo "📡 Testing Redis connection..."
+        docker-compose exec web python manage.py test_redis
+        ;;
+    "local")
+        echo "� Switching to local development environment..."
+        echo "⚠️  Make sure to start local PostgreSQL and Redis services."
+        echo "🔌 Run 'python start_server.py' for WebSocket support"
         ;;
     "migrate")
         echo "🔄 Running database migrations in Docker..."
@@ -43,20 +72,36 @@ case "$1" in
         docker-compose ps
         ;;
     *)
-        echo "🚀 Newsor Docker Management Script"
+        echo "🚀 Newsor Docker Management Script (WebSocket Enhanced)"
         echo ""
         echo "Usage: $0 {command}"
         echo ""
-        echo "Commands:"
-        echo "  docker-up     - Start all services with Docker"
-        echo "  docker-down   - Stop all Docker services"
-        echo "  docker-clean  - Stop and remove all containers/volumes"
-        echo "  local         - Switch to local development environment"
-        echo "  docker-env    - Switch to Docker environment"
-        echo "  migrate       - Run migrations in Docker container"
-        echo "  shell         - Open Django shell in Docker container"
-        echo "  logs          - Show Docker container logs"
-        echo "  status        - Show status of Docker containers"
+        echo "🐳 Container Management:"
+        echo "  dev|docker-up    - Start development environment with live reload & WebSocket support"
+        echo "  prod             - Start production environment"
+        echo "  stop|docker-down - Stop all Docker services"
+        echo "  clean            - Stop and remove all containers/volumes"
+        echo "  build            - Build all containers"
+        echo ""
+        echo "🔧 Development Tools:"
+        echo "  logs [service]   - Show Docker container logs (optionally for specific service)"
+        echo "  shell            - Open bash shell in web container"
+        echo "  migrate          - Run database migrations in Docker container"
+        echo "  test             - Run Django tests in Docker"
+        echo "  test-websocket   - Test WebSocket connection"
+        echo "  redis-test       - Test Redis connection and cache functionality"
+        echo ""
+        echo "💻 Local Development:"
+        echo "  local            - Information for local development setup"
+        echo ""
+        echo "📊 Monitoring:"
+        echo "  status           - Show status of Docker containers"
+        echo ""
+        echo "🔌 WebSocket Features:"
+        echo "  - Enhanced WebSocket consumer with better connection handling"
+        echo "  - Redis-backed real-time notifications"
+        echo "  - GraphQL-WS protocol support"
+        echo "  - JWT authentication for WebSocket connections"
         echo ""
         ;;
 esac

@@ -48,5 +48,5 @@ RUN chmod +x /entrypoint.sh
 # Run entrypoint script
 ENTRYPOINT ["/entrypoint.sh"]
 
-# Default command
-CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "newsor.asgi:application"]
+# Default command - use start_server.py for WebSocket support
+CMD ["python", "start_server.py"]

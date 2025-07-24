@@ -46,6 +46,8 @@ services:
       - DATABASE_USER=newsor_user
       - DATABASE_PASSWORD=newsor_password
       - REDIS_URL=redis://redis:6379/0
+      - REDIS_CACHE_URL=redis://redis:6379/1
+      - REDIS_WRITEBACK_URL=redis://redis:6379/2
     volumes:
       - ./media:/app/media
       - ./staticfiles:/app/staticfiles

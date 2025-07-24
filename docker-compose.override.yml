@@ -1,0 +1,29 @@
+version: '3.8'
+
+# Docker Compose override file for development
+# This file extends docker-compose.yml with development-specific settings
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  web:
+    environment:
+      - DEBUG=True
+    volumes:
+      # Mount source code for live development
+      - .:/app
+      # Exclude node_modules and __pycache__
+      - /app/node_modules
+      - /app/__pycache__
+    ports:
+      - "8000:8000"
+    command: python start_server.py
+    
+  db:
+    # Expose database port for external connections during development
+    ports:
+      - "5432:5432"
+    
+  redis:
+    # Expose Redis port for external connections during development
+    ports:
+      - "6379:6379"

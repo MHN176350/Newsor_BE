@@ -1,22 +1,51 @@
-# Docker Setup for Newsor
+# Newsor Backend - Enhanced WebSocket Docker Setup
 
-This document explains how to run Newsor using Docker with PostgreSQL and Redis containers instead of local services.
+This document explains how to run the Newsor backend with enhanced WebSocket support using Docker.
 
-## Prerequisites
+## 🚀 Quick Start
 
-- Docker and Docker Compose installed
-- Git (to clone the repository)
+### Development Environment (Recommended)
+```bash
+# Linux/Mac
+./docker-manage.sh dev
 
-## Quick Start
+# Windows (PowerShell)
+.\docker-manage.ps1 docker-up
 
-1. **Start the application with Docker:**
-   ```powershell
-   # Using PowerShell management script
-   .\docker-manage.ps1 docker-up
-   
-   # Or directly with docker-compose
-   docker-compose up --build
-   ```
+# Windows (Command Prompt)
+docker-manage.bat dev
+```
+
+### Production Environment
+```bash
+# Linux/Mac
+./docker-manage.sh prod
+
+# Windows
+docker-manage.bat prod
+```
+
+## 🔧 Enhanced Features
+
+### WebSocket Support
+- **Enhanced Consumer**: Improved connection handling with better error management
+- **Authentication**: Multiple token authentication methods (headers, query params, subprotocols)
+- **Real-time Notifications**: Redis-backed GraphQL subscriptions
+- **Protocol Support**: GraphQL-WS and GraphQL-Transport-WS protocols
+
+### Redis Caching
+- **Multi-database Setup**: 
+  - DB0: WebSocket channel layer
+  - DB1: Default cache
+  - DB2: Write-back cache for high-frequency operations
+- **Performance Optimized**: Batch operations for view counts and user interactions
+
+### Start Server Script
+The `start_server.py` script provides:
+- **Automatic Environment Detection**: Docker vs local development
+- **Health Checks**: Redis connection validation
+- **Migration Management**: Automatic database migrations
+- **WebSocket Server**: Daphne ASGI server with WebSocket support
    
    > ⚠️ **First Build Notice**: The initial build may take 3-5 minutes due to downloading and compiling dependencies. Subsequent builds will be much faster thanks to Docker layer caching.
 

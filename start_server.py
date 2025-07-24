@@ -51,13 +51,28 @@ def start_server(port=8000):
         print("🛑 Press Ctrl+C to stop the server")
         print("=" * 60)
         
-        # Use Daphne for ASGI support (WebSockets)
-        cmd = [
-            sys.executable, "-m", "daphne",
-            "-p", str(port),
-            "-b", "0.0.0.0",
-            "newsor.asgi:application"
-        ]
+        # Check if running in Docker (skip Redis check in Docker)
+        import os
+        is_docker = os.environ.get('DATABASE_HOST') == 'db'
+        
+        if is_docker:
+            print("🐳 Docker environment detected, using optimized settings...")
+            # In Docker, use daphne directly for better performance
+            cmd = [
+                sys.executable, "-m", "daphne",
+                "-p", str(port),
+                "-b", "0.0.0.0",
+                "newsor.asgi:application"
+            ]
+        else:
+            # Local development, use daphne with verbose output
+            cmd = [
+                sys.executable, "-m", "daphne",
+                "-p", str(port),
+                "-b", "0.0.0.0",
+                "-v", "2",  # Verbose logging for development
+                "newsor.asgi:application"
+            ]
         
         subprocess.run(cmd)
         
@@ -78,6 +93,9 @@ def start_server(port=8000):
 
 def main():
     """Main function."""
+    import os
+    is_docker = os.environ.get('DATABASE_HOST') == 'db'
+    
     print("🔧 Django WebSocket Server Startup")
     print("=" * 40)
     
@@ -86,20 +104,29 @@ def main():
         print("❌ manage.py not found. Please run this script from the Django project root.")
         sys.exit(1)
     
-    # Check Redis connection
-    if not check_redis_connection():
-        response = input("Continue without Redis? (y/N): ")
-        if response.lower() != 'y':
-            sys.exit(1)
+    # Check Redis connection (skip in Docker as it's handled by docker-compose)
+    if not is_docker:
+        if not check_redis_connection():
+            response = input("Continue without Redis? (y/N): ")
+            if response.lower() != 'y':
+                sys.exit(1)
+    else:
+        print("🐳 Skipping Redis check in Docker environment")
     
-    # Run migrations
-    if not run_migrations():
-        response = input("Continue with migration errors? (y/N): ")
-        if response.lower() != 'y':
-            sys.exit(1)
+    # Run migrations (skip in Docker as it's handled by entrypoint)
+    if not is_docker:
+        if not run_migrations():
+            response = input("Continue with migration errors? (y/N): ")
+            if response.lower() != 'y':
+                sys.exit(1)
+    else:
+        print("🐳 Skipping migrations in Docker environment (handled by entrypoint)")
     
-    # Collect static files
-    collect_static()
+    # Collect static files (skip in Docker as it's handled by Dockerfile)
+    if not is_docker:
+        collect_static()
+    else:
+        print("🐳 Skipping static files collection in Docker environment")
     
     # Get port from command line or use default
     port = 8000

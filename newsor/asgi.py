@@ -18,7 +18,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'newsor.settings')
 # Import after Django setup
 django_asgi_app = get_asgi_application()
 
-from api.consumers_enhanced import GraphQLSubscriptionConsumer
+from api.consumers import GraphQLSubscriptionConsumer
 
 application = ProtocolTypeRouter({
     'http': django_asgi_app,
