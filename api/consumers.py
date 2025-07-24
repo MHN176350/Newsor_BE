@@ -128,11 +128,11 @@ class GraphQLSubscriptionConsumer(AsyncWebsocketConsumer):
                     }))
 
             elif message_type == 'complete':
-                print(f"❌ Subscription complete for ID: {message.get('id')}")
+                print(f" Subscription complete for ID: {message.get('id')}")
                 self.subscription_id = None
 
         except json.JSONDecodeError:
-            print("❗ JSON decode error in WebSocket receive()")
+            print(" JSON decode error in WebSocket receive()")
 
 
     async def notification_message(self, event):

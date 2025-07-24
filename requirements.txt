@@ -15,3 +15,7 @@ channels-redis==4.1.0
 uvicorn[standard]==0.32.1
 daphne==4.0.0
 bleach==6.0.0
+redis==5.0.1
+django-redis==5.4.0
+celery==5.3.4
+websockets==12.0

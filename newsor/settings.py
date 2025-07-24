@@ -88,6 +88,75 @@ CHANNEL_LAYERS = {
     },
 }
 
+# Redis Cache configuration
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": config('REDIS_CACHE_URL', default='redis://127.0.0.1:6379/1'),
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "SERIALIZER": "django_redis.serializers.json.JSONSerializer",
+            "COMPRESSOR": "django_redis.compressors.zlib.ZlibCompressor",
+            "CONNECTION_POOL_KWARGS": {
+                "max_connections": 50,
+                "retry_on_timeout": True,
+            },
+        },
+        "KEY_PREFIX": "newsor_cache",
+        "VERSION": 1,
+        "TIMEOUT": config('CACHE_TIMEOUT', default=300, cast=int),  # 5 minutes default
+    },
+    "write_back": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": config('REDIS_WRITEBACK_URL', default='redis://127.0.0.1:6379/2'),
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "SERIALIZER": "django_redis.serializers.json.JSONSerializer",
+        },
+        "KEY_PREFIX": "newsor_writeback",
+        "VERSION": 1,
+        "TIMEOUT": None,  # No expiration for write-back cache
+    },
+}
+
+# Cache configuration
+CACHE_MIDDLEWARE_ALIAS = 'default'
+CACHE_MIDDLEWARE_SECONDS = config('CACHE_MIDDLEWARE_SECONDS', default=300, cast=int)
+CACHE_MIDDLEWARE_KEY_PREFIX = 'newsor'
+
+# Write-back cache configuration
+WRITE_BACK_CACHE_ALIAS = 'write_back'
+WRITE_BACK_BATCH_SIZE = config('WRITE_BACK_BATCH_SIZE', default=100, cast=int)
+WRITE_BACK_FLUSH_INTERVAL = config('WRITE_BACK_FLUSH_INTERVAL', default=60, cast=int)  # 60 seconds
+
+# Celery configuration
+CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://127.0.0.1:6379/3')
+CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://127.0.0.1:6379/3')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+
+# Celery Beat configuration (optional)
+CELERY_BEAT_SCHEDULE = {
+    'flush-write-back-cache': {
+        'task': 'api.tasks.flush_write_back_cache',
+        'schedule': 60.0,  # Every 60 seconds
+    },
+    'warm-up-trending': {
+        'task': 'api.tasks.warm_up_trending_content',
+        'schedule': 300.0,  # Every 5 minutes
+    },
+    'update-view-counts': {
+        'task': 'api.tasks.update_view_counts',
+        'schedule': 120.0,  # Every 2 minutes
+    },
+    'cache-health-check': {
+        'task': 'api.tasks.cache_health_check',
+        'schedule': 600.0,  # Every 10 minutes
+    },
+}
+
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
